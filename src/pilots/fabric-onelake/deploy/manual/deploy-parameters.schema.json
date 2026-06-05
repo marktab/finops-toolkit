@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contractId": "fabric-onelake.deploy-parameters",
+  "contractVersion": "1.0.0",
+  "title": "Manual Fabric deployment parameter contract",
+  "description": "Defines the inputs a customer (or operator) supplies after manually provisioning a Microsoft Fabric workspace + Lakehouse. The manual path is built and proven FIRST (Decision 3): if these parameters drive a working end-to-end run, the automated REST provisioning script becomes a convenience layer over a known-good path rather than a single point of failure. The preflight validator loads this schema and FAILS LOUDLY on any malformed or inconsistent value before any pipeline runs.",
+  "type": "object",
+  "required": [
+    "workspaceName",
+    "lakehouseName",
+    "oneLakeEndpoint",
+    "sqlEndpoint"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "workspaceName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Display name of the manually-created Fabric workspace."
+    },
+    "lakehouseName": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,255}$",
+      "description": "Name of the managed Lakehouse created in the workspace. Letters, digits, underscore; must start with a letter (Fabric naming rule)."
+    },
+    "oneLakeEndpoint": {
+      "type": "string",
+      "pattern": "^abfss://[^@/]+@onelake\\.dfs\\.fabric\\.microsoft\\.com/[^/]+\\.Lakehouse(/.*)?$",
+      "description": "ABFSS path to the Lakehouse in OneLake. Form: abfss://{workspace}@onelake.dfs.fabric.microsoft.com/{lakehouse}.Lakehouse. The notebooks write managed Delta here (Decision 2). Must be the OneLake DFS endpoint, never a blob endpoint."
+    },
+    "sqlEndpoint": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]+\\.datawarehouse\\.fabric\\.microsoft\\.com$",
+      "description": "SQL analytics endpoint host for the Lakehouse. Power BI connects here first (Decision 4: SQL endpoint before DirectLake). Host only, no scheme or database suffix."
+    },
+    "capacityId": {
+      "type": "string",
+      "description": "Optional. Fabric capacity resource id backing the workspace. Recorded for traceability; not required for the manual path."
+    },
+    "environment": {
+      "type": "string",
+      "enum": ["pilot", "dev", "test"],
+      "default": "pilot",
+      "description": "Deployment environment label. Restricted to non-production while the manual path is being proven."
+    }
+  }
+}
