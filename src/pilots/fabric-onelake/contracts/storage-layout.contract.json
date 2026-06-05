@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contractId": "fabric-onelake.storage-layout",
+  "contractVersion": "1.0.0",
+  "title": "D2 — physical storage contract (Delta in OneLake)",
+  "description": "Machine-readable contract for how FOCUS cost data is physically materialized in OneLake. Defines the managed Delta table, physical types, partitioning, Z-order, and the compaction service-level expectation. The compaction-with-metrics notebook and the DirectLake-readiness gate both load this file and FAIL LOUDLY when reality drifts from it. Do NOT assert these targets in documentation only — this file is the spec.",
+
+  "storageMode": {
+    "type": "managedDelta",
+    "rationale": "Decision 2: managed Delta tables, not shortcuts. Shortcuts inherit the source small-file problem and cannot be compacted or Z-ordered, so they cannot remove the $2-5M/month query ceiling. Managed Delta with daily compaction is the only option that does.",
+    "rejected": {
+      "shortcut": "Inherits small-file fragmentation; not compactable or Z-orderable. Same problem, different door."
+    }
+  },
+
+  "table": {
+    "name": "Costs",
+    "lakehouse": "{lakehouseName}",
+    "format": "delta",
+    "logicalSchemaContract": "./focus-schema.contract.json",
+    "note": "Column set and FOCUS version are owned by the D1 logical contract. This file owns only the PHYSICAL representation."
+  },
+
+  "physicalTypeMapping": {
+    "description": "Maps each D1 logical type to the physical Delta/Spark type written to OneLake. Cost/price measures use double (FOCUS 'real'), matching the toolkit v1_2 decision to use real over decimal for performance at scale.",
+    "decimal": {
+      "deltaType": "double",
+      "rationale": "Toolkit Hub schema v1_2 converts cost/price measures from decimal to real (double) for query performance. The Delta layout matches that physical choice."
+    },
+    "double": { "deltaType": "double" },
+    "string": { "deltaType": "string" },
+    "timestamp": { "deltaType": "timestamp" },
+    "boolean": { "deltaType": "boolean" },
+    "json": {
+      "deltaType": "string",
+      "rationale": "FOCUS Tags (and other JSON columns) are stored as a JSON-encoded string rather than a complex map type, because DirectLake has limited support for nested/complex types. Keeping them as strings preserves the DirectLake-readiness path (Decision 4)."
+    }
+  },
+
+  "partitioning": {
+    "description": "Partition by charge period month. Aligns with the dominant time-range filter in cost reporting and keeps partition counts bounded.",
+    "columns": ["x_ChargeMonth"],
+    "derivation": "x_ChargeMonth = date_trunc('month', ChargePeriodStart), stored as a DATE for partition pruning.",
+    "note": "ChargePeriodStart itself is high-cardinality (daily); a derived month column keeps partitions coarse."
+  },
+
+  "zorder": {
+    "status": "provisional",
+    "columns": ["BillingAccountId", "SubscriptionId"],
+    "rationale": "Reasonable default: these are the most common high-cardinality filter/group dimensions in multi-account, multi-subscription cost analysis.",
+    "validationRequired": "Confirm against the pilot customer's ACTUAL dominant query filters before locking in (Phase 6). Treat as provisional until one full billing cycle of query telemetry exists. Re-running OPTIMIZE ZORDER BY with different columns is non-destructive, so this is safe to revise.",
+    "subscriptionIdNote": "SubscriptionId is an Azure x_ dimension; if the pilot's FOCUS output names it differently (e.g. x_SubscriptionId), update this list to match the canonical column name in the D1 source."
+  },
+
+  "compaction": {
+    "description": "Compaction is treated as a MONITORED SLA, not a fire-and-forget scheduled job. It is load-bearing for query performance AND for the DirectLake-readiness gate, and is the easiest thing to silently stop running.",
+    "schedule": "daily",
+    "operation": "OPTIMIZE",
+    "targetFileSizeMB": 128,
+    "targetFileSizeRange": { "minMB": 64, "maxMB": 256 },
+    "sla": {
+      "maxHoursSinceLastSuccessfulRun": 26,
+      "minAvgFileSizeMB": 64,
+      "maxSmallFileFraction": 0.10,
+      "smallFileThresholdMB": 16,
+      "note": "26h tolerance allows one missed daily window before alerting. Breaching any threshold must raise an alert (Data Activator / monitoring), not silently degrade queries."
+    },
+    "metrics": {
+      "description": "Emitted on every run to a location an alert can watch. These are the inputs to both the SLA check and the DirectLake-readiness gate.",
+      "emit": [
+        "fileCountBefore",
+        "fileCountAfter",
+        "avgFileSizeMBBefore",
+        "avgFileSizeMBAfter",
+        "smallFileFractionAfter",
+        "bytesRewritten",
+        "lastRunTimestampUtc",
+        "lastRunStatus"
+      ],
+      "sink": {
+        "type": "deltaTable",
+        "name": "_pilot_compaction_metrics",
+        "note": "Append-only operational table; one row per run. Watchable by Data Activator or a scheduled alert query."
+      }
+    }
+  },
+
+  "enforcement": {
+    "description": "Policy applied by the compaction notebook and the readiness gate. Every rule maps to a silent-failure scenario from the decision deck.",
+    "failOnStaleCompaction": true,
+    "failOnSmallFileFractionExceeded": true,
+    "failOnAvgFileSizeBelowMin": true,
+    "failOnZorderColumnMissing": true,
+    "warnOnProvisionalZorderUnvalidated": true
+  }
+}
