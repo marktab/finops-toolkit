@@ -85,6 +85,14 @@
     }
   },
 
+  "directLake": {
+    "description": "Guardrails consumed by the DirectLake-readiness gate (Decision 4). DirectLake silently falls back to DirectQuery above these limits, so they are checked, not assumed. Defaults are conservative and SKU-agnostic; raise them only when validated against the pilot capacity SKU's published DirectLake limits.",
+    "maxRows": 1500000000,
+    "maxFiles": 10000,
+    "minAvgFileSizeMB": 64,
+    "note": "minAvgFileSizeMB mirrors the compaction SLA floor so a table that passes compaction is sized appropriately for DirectLake memory-mapping."
+  },
+
   "enforcement": {
     "description": "Policy applied by the compaction notebook and the readiness gate. Every rule maps to a silent-failure scenario from the decision deck.",
     "failOnStaleCompaction": true,
