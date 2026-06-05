@@ -71,7 +71,7 @@ Describe 'Test-PilotDeployment' {
             $p.Remove('sqlEndpoint')
             $path = New-TempParams -Params $p
             { Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath } |
-                Should -Throw -ExpectedMessage '*sqlEndpoint*'
+            Should -Throw -ExpectedMessage '*sqlEndpoint*'
         }
 
         It 'throws on a malformed OneLake endpoint' {
@@ -79,7 +79,7 @@ Describe 'Test-PilotDeployment' {
             $p.oneLakeEndpoint = 'https://contoso.blob.core.windows.net/FinOpsHub'
             $path = New-TempParams -Params $p
             { Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath } |
-                Should -Throw
+            Should -Throw
         }
 
         It 'throws when a blob endpoint is supplied' {
@@ -88,7 +88,7 @@ Describe 'Test-PilotDeployment' {
             $p.oneLakeEndpoint = 'abfss://ws@contoso.blob.core.windows.net/FinOpsHub.Lakehouse'
             $path = New-TempParams -Params $p
             { Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath } |
-                Should -Throw
+            Should -Throw
         }
 
         It 'throws when lakehouseName and endpoint disagree' {
@@ -96,7 +96,7 @@ Describe 'Test-PilotDeployment' {
             $p.lakehouseName = 'OtherName'
             $path = New-TempParams -Params $p
             { Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath } |
-                Should -Throw -ExpectedMessage '*Inconsistent*'
+            Should -Throw -ExpectedMessage '*Inconsistent*'
         }
 
         It 'throws on an unknown parameter' {
@@ -104,7 +104,7 @@ Describe 'Test-PilotDeployment' {
             $p['unexpected'] = 'value'
             $path = New-TempParams -Params $p
             { Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath } |
-                Should -Throw -ExpectedMessage '*Unknown parameter*'
+            Should -Throw -ExpectedMessage '*Unknown parameter*'
         }
 
         It 'throws on an invalid environment enum value' {
@@ -112,12 +112,12 @@ Describe 'Test-PilotDeployment' {
             $p.environment = 'production'
             $path = New-TempParams -Params $p
             { Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath } |
-                Should -Throw
+            Should -Throw
         }
 
         It 'throws when the parameters file does not exist' {
             { Test-PilotDeployment -ParametersPath (Join-Path $TestDrive 'missing.json') -SchemaPath $script:schemaPath } |
-                Should -Throw -ExpectedMessage '*not found*'
+            Should -Throw -ExpectedMessage '*not found*'
         }
     }
 }

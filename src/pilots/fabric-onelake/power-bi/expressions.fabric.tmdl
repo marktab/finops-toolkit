@@ -1,0 +1,52 @@
+/// Fabric SQL-endpoint parameters and validation for the FinOps OneLake pilot.
+///
+/// Apply this as a connection swap on top of the existing report's Shared.Dataset:
+/// replace the storage parameters with these, and point the Costs table partition
+/// at ftk_FabricSql (see Costs.partition.fabric.tmdl). All visuals, measures, and
+/// relationships are reused verbatim - this is a connection swap, not a redesign.
+
+/// Host of the Fabric SQL analytics endpoint for your Lakehouse. Found in the Lakehouse SQL endpoint Settings. Form: {name}.datawarehouse.fabric.microsoft.com (host only, no scheme).
+expression 'SQL Endpoint' = "" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]
+	queryGroup: '🛠️ Setup'
+
+	annotation PBI_ResultType = Text
+
+/// Lakehouse (database) name on the SQL analytics endpoint. This is the Lakehouse name you created.
+expression 'SQL Database' = "FinOpsHub" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]
+	queryGroup: '🛠️ Setup'
+
+	annotation PBI_ResultType = Text
+
+/// Number of months of data to load. Leave blank to load all available data.
+expression 'Number of Months' = 13 meta [IsParameterQuery=true, Type="Number", IsParameterQueryRequired=false]
+	queryGroup: '🛠️ Setup'
+
+	annotation PBI_ResultType = Number
+
+expression RangeStart = null meta [IsParameterQuery=true, Type="DateTime", IsParameterQueryRequired=false]
+	queryGroup: '🛠️ Setup'
+
+	annotation PBI_ResultType = Null
+
+expression RangeEnd = null meta [IsParameterQuery=true, Type="DateTime", IsParameterQueryRequired=false]
+	queryGroup: '🛠️ Setup'
+
+	annotation PBI_ResultType = Null
+
+/// Validates the SQL endpoint parameter and reports readiness, mirroring the storage variant's START HERE check.
+expression '▶️  START HERE' = ```
+		let
+		    Endpoint = #"SQL Endpoint",
+		    SqlCheck =
+		        if Endpoint = "" or Endpoint = null then {"✖️ Invalid", "SQL Endpoint not specified. Copy it from the Lakehouse SQL analytics endpoint Settings."}
+		        else if Text.StartsWith(Text.Lower(Endpoint), "https://") then {"✖️ Invalid", "SQL Endpoint must be the host only, without https://."}
+		        else if Text.EndsWith(Text.Lower(Endpoint), ".datawarehouse.fabric.microsoft.com") = false then {"✖️ Invalid", "SQL Endpoint must end with .datawarehouse.fabric.microsoft.com."}
+		        else if #"SQL Database" = "" or #"SQL Database" = null then {"✖️ Invalid", "SQL Database (Lakehouse name) not specified."}
+		        else {"✔️ Specified", "Will use Fabric SQL endpoint: " & Endpoint & " (" & #"SQL Database" & ")."},
+		    Result = Table.FromRows({SqlCheck}, {"Status", "Details"})
+		in
+		    Result
+		```
+	queryGroup: '🛠️ Setup'
+
+	annotation PBI_ResultType = Table

@@ -83,7 +83,7 @@ function Initialize-PilotFabric
     )
 
     $headers = @{
-        Authorization = "Bearer $AccessToken"
+        Authorization  = "Bearer $AccessToken"
         'Content-Type' = 'application/json'
     }
 
