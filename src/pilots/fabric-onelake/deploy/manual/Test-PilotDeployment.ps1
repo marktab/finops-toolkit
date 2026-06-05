@@ -200,8 +200,16 @@ function Test-PilotEndpointReachability
         $SqlEndpoint
     )
 
-    # OneLake host is constant; resolve it to confirm DNS/network egress works.
-    $oneLakeHost = 'onelake.dfs.fabric.microsoft.com'
+    # Derive the OneLake host from the supplied endpoint so a malformed value fails the smoke test
+    # rather than silently resolving a hardcoded host. Format: abfss://{workspace}@{host}/{lakehouse}.Lakehouse
+    if ($OneLakeEndpoint -match '@([^/]+)')
+    {
+        $oneLakeHost = $Matches[1]
+    }
+    else
+    {
+        throw "OneLakeEndpoint '$OneLakeEndpoint' is missing the '@{host}' segment; cannot determine the host to resolve."
+    }
 
     foreach ($targetHost in @($oneLakeHost, $SqlEndpoint))
     {

@@ -27,6 +27,9 @@
 #>
 function Invoke-PilotManualSetup
 {
+    # Write-Host is intentional: this is an interactive operator runbook whose purpose is to print
+    # ordered, color-coded provisioning steps directly to the console for a human to follow.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
     [CmdletBinding()]
     [OutputType([hashtable])]
     param
