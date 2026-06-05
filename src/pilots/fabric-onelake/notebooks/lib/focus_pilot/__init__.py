@@ -9,6 +9,12 @@ by tested code that fails loudly, never asserted only in documentation.
 from __future__ import annotations
 
 from .metrics import FileMetrics, compute_file_metrics
+from .promotion import (
+    PromotionDecision,
+    ZorderRecommendation,
+    evaluate_directlake_promotion,
+    recommend_zorder,
+)
 from .readiness import ReadinessResult, evaluate_directlake_readiness
 from .schema_bridge import (
     SPARK_TO_LOGICAL,
@@ -19,6 +25,10 @@ from .schema_bridge import (
 __all__ = [
     "FileMetrics",
     "compute_file_metrics",
+    "PromotionDecision",
+    "ZorderRecommendation",
+    "evaluate_directlake_promotion",
+    "recommend_zorder",
     "ReadinessResult",
     "evaluate_directlake_readiness",
     "SPARK_TO_LOGICAL",
