@@ -1,22 +1,50 @@
 # FinOps Fabric / OneLake pilot
 
-An **optional, self-contained** path that materializes the FinOps toolkit's
-already-normalized FOCUS cost data as a **managed Delta table in OneLake**, so it
-can be compacted and served fast to Power BI. It lives beside the existing toolkit
-and can be removed without impact — nothing in the current hub changes.
+The FinOps Fabric / OneLake pilot is an optional, self-contained path that takes the
+cost data your FinOps hub already produces and materializes it as a managed Delta table
+in Microsoft OneLake, so it can be compacted and served quickly to Power BI. It lives
+beside the existing toolkit and can be removed without impact — nothing in your current
+hub changes.
 
-## If you know the legacy solution, here's what's different
+The pilot follows four design principles:
 
-| | Legacy hub (Parquet / KQL) | This pilot (Fabric / OneLake) |
+- **KQL stays the single transform owner**<br>_The pilot validates the FOCUS data the toolkit already produces; it does not re-implement normalization in Spark._
+- **Managed Delta, not shortcuts**<br>_Only managed Delta tables can be compacted and Z-ordered to remove the small-file query ceiling._
+- **Prove the manual path first**<br>_The manual deployment is built and proven before automation, so the automation is a convenience over a known-good path — not a single point of failure._
+- **DirectLake is earned, not assumed**<br>_Power BI connects to the SQL analytics endpoint first; a readiness gate must pass over a full billing cycle before DirectLake is enabled._
+
+Behind all four is one idea: each of these is a *silent* failure if it goes wrong, so
+every contract is enforced by code that stops loudly the moment reality drifts, rather
+than a convention written in a doc that no one re-checks.
+
+## Why this pilot?
+
+The toolkit's storage-based Power BI path serves cost data well until an organization's
+spend grows large — around \$2–5M/month — at which point the data is split across many
+small Parquet files that can't be compacted, and reports slow down. There has not been a
+Microsoft Fabric / OneLake path that removes that ceiling. This pilot adds one, without
+re-owning the data transform or disrupting anything already deployed.
+
+## What's different from the storage path
+
+If you already know the storage-based hub and reports, here is what changes:
+
+| | Storage path (Parquet / KQL) | This pilot (Fabric / OneLake) |
 |---|---|---|
 | **Where cost data lands** | Azure Data Explorer (KQL) or Parquet in storage | Managed Delta table in OneLake |
-| **Who owns the data shape** | KQL transform | **Still KQL** — this pilot only *validates* the output against a contract; it does not re-implement normalization in Spark |
-| **Small-file ceiling** | Parquet/Power BI path slows near $2–5M/month because many small files can't be compacted | Managed Delta is compacted daily (OPTIMIZE + Z-ORDER), removing the ceiling |
-| **Power BI connection** | Import/DirectQuery over storage | SQL analytics endpoint first; **DirectLake is earned**, gated by a readiness check, not assumed |
+| **Who owns the data shape** | KQL transform | **Still KQL** — the pilot only *validates* the output against a contract; it does not re-implement normalization in Spark |
+| **Small-file ceiling** | Reports slow near \$2–5M/month because many small files can't be compacted | Managed Delta is compacted daily (OPTIMIZE + Z-ORDER), removing the ceiling |
+| **Power BI connection** | Import / DirectQuery over storage | SQL analytics endpoint first; **DirectLake is earned**, gated by a readiness check, not assumed |
 | **How contracts are enforced** | Documented conventions | Machine-readable contracts (`contracts/`) that **fail loudly** in code when reality drifts |
 
-The guiding principle: every "if this breaks" case here is a *silent* failure, so each
-contract is enforced by code that **stops loudly** rather than a doc nobody re-checks.
+## What's included
+
+- `contracts/` — the machine-readable schema and storage-layout contracts the notebooks enforce.
+- `notebooks/` — the ingestion → Delta write → compaction → readiness → promotion notebooks, plus a sample-data generator and the shared `lib/` helpers.
+- `validation/` — the contract validator the notebooks import (unit-tested, no Spark required).
+- `deploy/manual/` — the proven-first manual setup and a fail-loud preflight check.
+- `deploy/automation/` — idempotent Fabric REST provisioning (get-or-create) over the manual path.
+- `power-bi/` — the SQL-endpoint report variant, applied as a one-line source swap.
 
 ## Run order
 
