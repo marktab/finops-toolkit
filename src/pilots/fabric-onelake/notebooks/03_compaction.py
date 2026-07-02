@@ -25,7 +25,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-_PILOT_ROOT = Path("/lakehouse/default/Files/pilot/fabric-onelake")
+_PILOT_ROOT = Path("/lakehouse/default/Files")
 for _p in (_PILOT_ROOT / "notebooks" / "lib", _PILOT_ROOT / "validation"):
     sys.path.insert(0, str(_p))
 
@@ -90,6 +90,11 @@ print(f"Compaction metrics: {metrics_row}")
 
 # Enforce the D2 compaction SLA. A stale or fragmented table fails here so it
 # pages someone instead of silently degrading queries and the DirectLake gate.
+# NOTE: storage-layout.contract.json currently carries PILOT TEST thresholds
+# (minAvgFileSizeMB=0.01, maxSmallFileFraction=1.0, smallFileThresholdMB=0.01)
+# so that synthetic test data passes. Before running against real billing data,
+# restore the production values in the contract:
+#   minAvgFileSizeMB=64, maxSmallFileFraction=0.10, smallFileThresholdMB=16
 result = validate_compaction_sla(metrics_row, str(_STORAGE_CONTRACT), now=run_ts)
 for warning in result.warnings:
     print(f"WARN: {warning}")

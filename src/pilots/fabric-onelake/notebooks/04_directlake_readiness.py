@@ -26,7 +26,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-_PILOT_ROOT = Path("/lakehouse/default/Files/pilot/fabric-onelake")
+_PILOT_ROOT = Path("/lakehouse/default/Files")
 for _p in (_PILOT_ROOT / "notebooks" / "lib", _PILOT_ROOT / "validation"):
     sys.path.insert(0, str(_p))
 

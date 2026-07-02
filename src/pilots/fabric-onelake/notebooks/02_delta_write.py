@@ -24,7 +24,7 @@ import json
 import sys
 from pathlib import Path
 
-_PILOT_ROOT = Path("/lakehouse/default/Files/pilot/fabric-onelake")
+_PILOT_ROOT = Path("/lakehouse/default/Files")
 sys.path.insert(0, str(_PILOT_ROOT / "notebooks" / "lib"))
 
 _CONTRACTS = _PILOT_ROOT / "contracts"

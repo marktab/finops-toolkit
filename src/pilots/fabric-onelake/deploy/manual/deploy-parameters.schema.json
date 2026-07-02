@@ -26,13 +26,13 @@
     },
     "oneLakeEndpoint": {
       "type": "string",
-      "pattern": "^abfss://[^@/]+@onelake\\.dfs\\.fabric\\.microsoft\\.com/[^/]+\\.Lakehouse(/.*)?$",
-      "description": "ABFSS path to the Lakehouse in OneLake. Form: abfss://{workspace}@onelake.dfs.fabric.microsoft.com/{lakehouse}.Lakehouse. The notebooks write managed Delta here (Decision 2). Must be the OneLake DFS endpoint, never a blob endpoint."
+      "pattern": "^abfss://[^@/]+@(msit-)?onelake\\.dfs\\.fabric\\.microsoft\\.com/[^/]+\\.Lakehouse(/.*)?$",
+      "description": "ABFSS path to the Lakehouse in OneLake. Form: abfss://{workspace}@onelake.dfs.fabric.microsoft.com/{lakehouse}.Lakehouse. For Microsoft-internal (msit) tenants the host is msit-onelake.dfs.fabric.microsoft.com. The notebooks write managed Delta here (Decision 2). Must be the OneLake DFS endpoint, never a blob endpoint."
     },
     "sqlEndpoint": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9-]+\\.datawarehouse\\.fabric\\.microsoft\\.com$",
-      "description": "SQL analytics endpoint host for the Lakehouse. Power BI connects here first (Decision 4: SQL endpoint before DirectLake). Host only, no scheme or database suffix."
+      "pattern": "^[A-Za-z0-9-]+\\.(msit-)?datawarehouse\\.fabric\\.microsoft\\.com$",
+      "description": "SQL analytics endpoint host for the Lakehouse. Power BI connects here first (Decision 4: SQL endpoint before DirectLake). Host only, no scheme or database suffix. For Microsoft-internal (msit) tenants the suffix is .msit-datawarehouse.fabric.microsoft.com."
     },
     "capacityId": {
       "type": "string",

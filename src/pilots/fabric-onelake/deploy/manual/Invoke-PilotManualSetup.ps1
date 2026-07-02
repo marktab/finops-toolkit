@@ -49,7 +49,7 @@ function Invoke-PilotManualSetup
         'Create (or select) a Microsoft Fabric capacity in a non-production tenant. Record its resource id as capacityId.'
         'Create a Fabric workspace and assign it to that capacity. Record its display name as workspaceName.'
         'Create a Lakehouse in the workspace. Record its name as lakehouseName (must start with a letter; letters/digits/underscore only).'
-        'Open the Lakehouse > Properties and copy the ABFSS OneLake path. It must look like abfss://{workspace}@onelake.dfs.fabric.microsoft.com/{lakehouse}.Lakehouse. Record it as oneLakeEndpoint.'
+        'Open the Lakehouse > Properties and copy the ABFSS OneLake path. It must look like abfss://{workspace}@onelake.dfs.fabric.microsoft.com/{lakehouse}.Lakehouse (or msit-onelake.dfs.fabric.microsoft.com for Microsoft-internal tenants). Record it as oneLakeEndpoint.'
         'Open the Lakehouse SQL analytics endpoint > Settings and copy the connection host (….datawarehouse.fabric.microsoft.com). Record it as sqlEndpoint.'
         "Fill in the parameters file at '$ParametersPath' using deploy-parameters.sample.json as a template."
         'Grant the pilot service principal (or your account) Contributor on the workspace so the notebooks can write Delta.'

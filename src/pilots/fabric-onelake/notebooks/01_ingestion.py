@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 # Make the pilot library and the Phase 1 validator importable.
-_PILOT_ROOT = Path("/lakehouse/default/Files/pilot/fabric-onelake")  # adjust to deployed path
+_PILOT_ROOT = Path("/lakehouse/default/Files")  # adjust to deployed path
 for _p in (_PILOT_ROOT / "notebooks" / "lib", _PILOT_ROOT / "validation"):
     sys.path.insert(0, str(_p))
 

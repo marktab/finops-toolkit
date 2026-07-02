@@ -15,7 +15,7 @@
   "columnSource": {
     "type": "reference",
     "description": "Canonical column + FOCUS-type definitions are owned by the toolkit open-data metadata. The pilot reuses that file as the source of truth instead of copying columns (copying would create the exact drift this decision avoids).",
-    "path": "../../../open-data/dataset-metadata/FocusCost_1.2-preview.json",
+    "path": "./FocusCost_1.2-preview.json",
     "columnNameField": "ColumnName",
     "dataTypeField": "DataType",
     "integrity": {
@@ -26,13 +26,13 @@
   },
 
   "typeMapping": {
-    "description": "Maps every FOCUS logical DataType used by columnSource to the logical type the pilot validates against. Must cover all DataTypes present in the source file; an unmapped type is a hard fail. Physical Delta/Spark types are defined in the D2 storage contract, not here.",
+    "description": "Maps every FOCUS logical DataType used by columnSource to the logical type the pilot validates against. Must cover all DataTypes present in the source file; an unmapped type is a hard fail. Physical Delta/Spark types are defined in the D2 storage contract, not here. JSON columns are mapped to 'string' because the pilot stores them as plain strings to keep the DirectLake path open (Decision 4); a JSON-string is a string in Spark.",
     "Decimal": "decimal",
     "Number": "double",
     "String": "string",
     "DateTime": "timestamp",
     "Boolean": "boolean",
-    "JSON": "json"
+    "JSON": "string"
   },
 
   "requiredColumns": {

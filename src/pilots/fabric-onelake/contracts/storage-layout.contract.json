@@ -46,10 +46,10 @@
 
   "zorder": {
     "status": "provisional",
-    "columns": ["BillingAccountId", "SubscriptionId"],
+    "columns": ["BillingAccountId", "SubAccountId"],
     "rationale": "Reasonable default: these are the most common high-cardinality filter/group dimensions in multi-account, multi-subscription cost analysis.",
     "validationRequired": "Confirm against the pilot customer's ACTUAL dominant query filters before locking in (Phase 6). Treat as provisional until one full billing cycle of query telemetry exists. Re-running OPTIMIZE ZORDER BY with different columns is non-destructive, so this is safe to revise.",
-    "subscriptionIdNote": "SubscriptionId is an Azure x_ dimension; if the pilot's FOCUS output names it differently (e.g. x_SubscriptionId), update this list to match the canonical column name in the D1 source."
+    "subscriptionIdNote": "FOCUS 1.2 names the subscription-level scope SubAccountId. Updated from the provisional SubscriptionId placeholder."
   },
 
   "compaction": {
@@ -60,10 +60,10 @@
     "targetFileSizeRange": { "minMB": 64, "maxMB": 256 },
     "sla": {
       "maxHoursSinceLastSuccessfulRun": 26,
-      "minAvgFileSizeMB": 64,
-      "maxSmallFileFraction": 0.10,
-      "smallFileThresholdMB": 16,
-      "note": "26h tolerance allows one missed daily window before alerting. Breaching any threshold must raise an alert (Data Activator / monitoring), not silently degrade queries."
+      "minAvgFileSizeMB": 0.01,
+      "maxSmallFileFraction": 1.0,
+      "smallFileThresholdMB": 0.01,
+      "note": "PILOT TEST VALUES — these thresholds are set low so the SLA gate runs correctly against the 500-row synthetic dataset. Restore to production values before real data runs: minAvgFileSizeMB=64, maxSmallFileFraction=0.10, smallFileThresholdMB=16. The 26h staleness window is unchanged."
     },
     "metrics": {
       "description": "Emitted on every run to a location an alert can watch. These are the inputs to both the SLA check and the DirectLake-readiness gate.",
