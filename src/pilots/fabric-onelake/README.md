@@ -134,6 +134,22 @@ by `environment().name` (see `Analytics/app.bicep`); the storage Power BI report
 full storage URL as a parameter. The pilot's manual endpoints work the same way — you
 paste the full host — so the manual path is already sovereign-friendly.
 
+## Troubleshooting
+
+A quick symptom → cause → fix reference for the issues most likely to appear on first run:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| OneLake File Explorer reports *"not in sync" / "Location is not available"* | Desktop app targets commercial OneLake; fails on msit/sovereign | Upload through the Fabric portal (**Files > Upload > Upload folder**) |
+| Notebook write to `/lakehouse/default/...` fails | Local mount not writable on msit | Write via the ABFSS endpoint (see `notebooks/00_generate_sample_focus.py`) |
+| `ModuleNotFoundError` importing `focus_pilot` or `contract_validator` | No default Lakehouse attached, or support folders not uploaded | Attach + set default Lakehouse; upload `notebooks/`, `contracts/`, `validation/` to Files |
+| `FileNotFoundError` on `FocusCost_1.2-preview.json` | Column-source file not uploaded with the contracts | Re-upload the `contracts/` folder |
+| `ContractViolation: ... expected json, got string` | Older contract mapped JSON columns to `json` | Re-upload the current `contracts/` (JSON maps to `string`) |
+| `ContractViolation: average file size below floor` on tiny data | Production SLA thresholds vs. synthetic test data | Expected on small data; contract ships pilot-scale thresholds — restore production values before real data |
+| `DirectLake NO-GO` on small data | Dataset too small to meet DirectLake guardrails | Expected and correct; the SQL endpoint path still works |
+| `DataSource.CapacityExceeded` in Power BI | Trial Spark sessions still consuming capacity | Stop notebook sessions (**Monitor** hub) and retry after a few minutes |
+| Power BI refresh prompts for an Azure Blob storage account | Other report tables still point to storage | Expected — only `Costs` is swapped; cancel the prompt |
+
 ## Known issues on Microsoft-internal (msit) and sovereign tenants
 
 These are environment quirks, not pilot bugs — you will hit them on msit and possibly on
@@ -151,3 +167,48 @@ sovereign/air-gapped tenants, and the fix is operational:
   capacity has exceeded its limits"*. **Stop notebook Spark sessions** (each notebook's
   **Stop session**, or the **Monitor** hub) and retry after a few minutes. This is a
   capacity limit, not a connection or schema error — the swap/query is already correct.
+
+## Running the tests
+
+The contract validator and library logic are unit-tested and require no Spark cluster, so
+they run anywhere Python is available:
+
+```bash
+python -m pytest src/pilots/fabric-onelake/notebooks/tests/test_focus_pilot.py
+python -m pytest src/pilots/fabric-onelake/validation/test_contract_validator.py
+```
+
+These cover the schema/type/non-null contract rules and the compaction SLA logic — the
+same checks the notebooks enforce at runtime — so a contract regression is caught without
+deploying to Fabric.
+
+## Pilot status and graduation
+
+This is a **pilot**, and the folder name is a lifecycle stage — not a verdict on quality.
+It lives under `pilots/` because a few things are true only at pilot scale today, and the
+`pilots/` location keeps the promise that it is self-contained and removable while those
+prove out. "Pilot" here means *staged with a known graduation path*, not *demo*.
+
+**What "pilot" means right now**
+
+- Contracts, validation, the fail-loud preflight, and the unit tests are production-grade
+  and run without a cluster.
+- The compaction SLA thresholds are set to **pilot-scale** values so synthetic test data
+  passes (`contracts/storage-layout.contract.json` notes the production values to restore).
+- DirectLake is gated: the readiness check returns NO-GO until real data volume is present,
+  so the SQL-endpoint path is the supported connection today.
+
+**Graduation criteria — what has to be true to leave `pilots/`**
+
+1. Runs against **real billing data** for at least one full billing cycle.
+2. The **DirectLake readiness gate passes** on that real data.
+3. Compaction SLA thresholds are **restored to production values** and hold over that cycle.
+4. Endpoints are proven on at least the commercial and one non-commercial cloud.
+5. The component is wired into the **build/packaging system** (versioning, tests in CI).
+
+**Where it graduates to**
+
+When those hold, this becomes a first-class **Fabric / OneLake materialization path** for
+the toolkit — a peer to the storage and KQL paths, moved out of `pilots/` into the main
+`src/` structure and packaged like the other components. Until then, it stays here,
+reversible and clearly labeled.

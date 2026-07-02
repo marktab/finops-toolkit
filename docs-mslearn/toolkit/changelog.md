@@ -3,7 +3,7 @@ title: FinOps toolkit changelog
 description: Review the latest features and enhancements in the FinOps toolkit, including updates to FinOps hubs, Power BI reports, and more.
 author: MSBrett
 ms.author: brettwil
-ms.date: 06/22/2026
+ms.date: 07/01/2026
 ms.topic: reference
 ms.service: finops
 ms.subservice: finops-toolkit
@@ -18,14 +18,16 @@ ms.reviewer: brettwil
 
 This article summarizes the features and enhancements in each release of the FinOps toolkit.
 
-<!--
 <br>
 
 ## Unreleased
 
 The following section lists features and enhancements that are currently in development.
 
--->
+### FinOps Fabric / OneLake pilot
+
+- **Added**
+  - Added an optional Microsoft Fabric / OneLake pilot under `src/pilots/fabric-onelake` that materializes FOCUS cost data as a managed Delta table, enforces machine-readable schema and storage-layout contracts in code, runs compaction with monitored SLA metrics, gates DirectLake behind a readiness check, and swaps the Power BI `Costs` source to the Lakehouse SQL analytics endpoint. Includes manual and REST-based deployment paths with a fail-loud preflight and environment-aware endpoints for commercial and Microsoft-internal tenants.
 
 <br><a name="latest"></a>
 
