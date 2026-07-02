@@ -27,12 +27,12 @@
     "oneLakeEndpoint": {
       "type": "string",
       "pattern": "^abfss://[^@/]+@(msit-)?onelake\\.dfs\\.fabric\\.microsoft\\.com/[^/]+\\.Lakehouse(/.*)?$",
-      "description": "ABFSS path to the Lakehouse in OneLake. Form: abfss://{workspace}@onelake.dfs.fabric.microsoft.com/{lakehouse}.Lakehouse. For Microsoft-internal (msit) tenants the host is msit-onelake.dfs.fabric.microsoft.com. The notebooks write managed Delta here (Decision 2). Must be the OneLake DFS endpoint, never a blob endpoint."
+      "description": "ABFSS path to the Lakehouse in OneLake. Form: abfss://{workspace}@onelake.dfs.fabric.microsoft.com/{lakehouse}.Lakehouse. For Microsoft-internal (msit) tenants the host is msit-onelake.dfs.fabric.microsoft.com. The notebooks write managed Delta here (Decision 2). Must be the OneLake DFS endpoint, never a blob endpoint. SOVEREIGN CLOUDS: the default pattern covers the commercial and msit hosts only; if your cloud uses a different OneLake DFS host, widen this pattern to include it (copy the exact host from the Lakehouse > Properties ABFSS path)."
     },
     "sqlEndpoint": {
       "type": "string",
       "pattern": "^[A-Za-z0-9-]+\\.(msit-)?datawarehouse\\.fabric\\.microsoft\\.com$",
-      "description": "SQL analytics endpoint host for the Lakehouse. Power BI connects here first (Decision 4: SQL endpoint before DirectLake). Host only, no scheme or database suffix. For Microsoft-internal (msit) tenants the suffix is .msit-datawarehouse.fabric.microsoft.com."
+      "description": "SQL analytics endpoint host for the Lakehouse. Power BI connects here first (Decision 4: SQL endpoint before DirectLake). Host only, no scheme or database suffix. For Microsoft-internal (msit) tenants the suffix is .msit-datawarehouse.fabric.microsoft.com. SOVEREIGN CLOUDS: the default pattern covers the commercial and msit suffixes only; if your cloud uses a different SQL endpoint suffix, widen this pattern to include it (copy the exact host from the Lakehouse SQL analytics endpoint Settings)."
     },
     "capacityId": {
       "type": "string",

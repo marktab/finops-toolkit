@@ -5,7 +5,7 @@
 /// at ftk_FabricSql (see Costs.partition.fabric.tmdl). All visuals, measures, and
 /// relationships are reused verbatim - this is a connection swap, not a redesign.
 
-/// Host of the Fabric SQL analytics endpoint for your Lakehouse. Found in the Lakehouse SQL endpoint Settings. Form: {name}.datawarehouse.fabric.microsoft.com (host only, no scheme).
+/// Host of the Fabric SQL analytics endpoint for your Lakehouse. Found in the Lakehouse SQL endpoint Settings. Form: {name}.datawarehouse.fabric.microsoft.com (host only, no scheme). Microsoft-internal (msit) tenants use {name}.msit-datawarehouse.fabric.microsoft.com; both are accepted below. Sovereign-cloud users whose host ends differently must widen the check in the START HERE expression.
 expression 'SQL Endpoint' = "" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]
 	queryGroup: '🛠️ Setup'
 
@@ -40,7 +40,11 @@ expression '▶️  START HERE' = ```
 		    SqlCheck =
 		        if Endpoint = "" or Endpoint = null then {"✖️ Invalid", "SQL Endpoint not specified. Copy it from the Lakehouse SQL analytics endpoint Settings."}
 		        else if Text.StartsWith(Text.Lower(Endpoint), "https://") then {"✖️ Invalid", "SQL Endpoint must be the host only, without https://."}
-		        else if Text.EndsWith(Text.Lower(Endpoint), ".datawarehouse.fabric.microsoft.com") = false then {"✖️ Invalid", "SQL Endpoint must end with .datawarehouse.fabric.microsoft.com."}
+		        // Accept both the commercial suffix (.datawarehouse.fabric.microsoft.com) and the
+		        // Microsoft-internal msit suffix (.msit-datawarehouse.fabric.microsoft.com) by matching
+		        // on the shared trailing "datawarehouse.fabric.microsoft.com". Sovereign-cloud hosts that
+		        // end differently should extend this condition with their cloud's suffix.
+		        else if Text.EndsWith(Text.Lower(Endpoint), "datawarehouse.fabric.microsoft.com") = false then {"✖️ Invalid", "SQL Endpoint must end with datawarehouse.fabric.microsoft.com (commercial) or msit-datawarehouse.fabric.microsoft.com (Microsoft internal). For a sovereign cloud, extend this check with your cloud's suffix."}
 		        else if #"SQL Database" = "" or #"SQL Database" = null then {"✖️ Invalid", "SQL Database (Lakehouse name) not specified."}
 		        else {"✔️ Specified", "Will use Fabric SQL endpoint: " & Endpoint & " (" & #"SQL Database" & ")."},
 		    Result = Table.FromRows({SqlCheck}, {"Status", "Details"})

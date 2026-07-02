@@ -79,7 +79,21 @@ function Initialize-PilotFabric
 
         [Parameter(Mandatory = $false)]
         [string]
-        $ApiBaseUrl = 'https://api.fabric.microsoft.com/v1'
+        $ApiBaseUrl = 'https://api.fabric.microsoft.com/v1',
+
+        # OneLake DFS host used to build the ABFSS endpoint. Defaults to the public
+        # commercial cloud. Override this for non-commercial clouds:
+        #   Commercial (default) : onelake.dfs.fabric.microsoft.com
+        #   Microsoft internal   : msit-onelake.dfs.fabric.microsoft.com
+        #   Sovereign clouds     : the OneLake DFS host for your cloud (for example a
+        #                          US Gov / air-gapped tenant uses that cloud's host).
+        #                          Confirm the exact host in the Lakehouse > Properties
+        #                          ABFSS path, which is authoritative for your tenant.
+        # The SQL endpoint is NOT built here: it is read back from the Fabric API
+        # response below, so it is always correct for whatever cloud you are in.
+        [Parameter(Mandatory = $false)]
+        [string]
+        $OneLakeHost = 'onelake.dfs.fabric.microsoft.com'
     )
 
     $headers = @{
@@ -136,10 +150,15 @@ function Initialize-PilotFabric
     }
 
     # --- Resolve endpoints -------------------------------------------------------
-    # OneLake ABFSS path is deterministic from workspace + lakehouse names.
-    $oneLakeEndpoint = "abfss://$WorkspaceName@onelake.dfs.fabric.microsoft.com/$LakehouseName.Lakehouse"
+    # OneLake ABFSS path is deterministic from workspace + lakehouse names. The host
+    # segment differs by cloud (see the -OneLakeHost parameter): commercial uses
+    # onelake.dfs.fabric.microsoft.com, Microsoft-internal uses msit-onelake..., and
+    # sovereign clouds use their own host. Only the host varies; the shape is identical.
+    $oneLakeEndpoint = "abfss://$WorkspaceName@$OneLakeHost/$LakehouseName.Lakehouse"
 
     # SQL endpoint comes from the Lakehouse properties (may take a moment to provision).
+    # We read it back from the API rather than constructing it, so it is automatically
+    # correct for the current cloud (commercial, msit, or sovereign) with no extra config.
     $sqlEndpoint = $lakehouse.properties.sqlEndpointProperties.connectionString
     if (-not $sqlEndpoint)
     {

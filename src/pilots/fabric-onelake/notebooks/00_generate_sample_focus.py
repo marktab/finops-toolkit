@@ -28,6 +28,16 @@ from pyspark.sql import types as T
 MONTH = date(2025, 5, 1)          # billing/charge month
 ROW_COUNT = 500                   # keep small for a trial capacity
 OUTPUT_PATH = "Files/sample-focus"
+
+# ABFSS root of your Lakehouse. Writing via ABFSS (instead of the local
+# /lakehouse/default mount) is the reliable path on tenants where the local
+# mount does not resolve — notably Microsoft-internal (msit) capacities.
+#
+# The host segment differs by cloud; copy the authoritative value from your
+# Lakehouse > Properties ABFSS path and paste it here:
+#   Commercial        : abfss://<ws>@onelake.dfs.fabric.microsoft.com/<lh>.Lakehouse
+#   Microsoft (msit)  : abfss://<ws>@msit-onelake.dfs.fabric.microsoft.com/<lh>.Lakehouse
+#   Sovereign clouds  : abfss://<ws>@<your-cloud-onelake-host>/<lh>.Lakehouse
 ABFSS_ROOT = "abfss://FabricFinOps@msit-onelake.dfs.fabric.microsoft.com/FinOpsLakehouse.Lakehouse"
 # ---------------------------------------------------------------------------
 
