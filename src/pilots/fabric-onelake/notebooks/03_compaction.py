@@ -90,12 +90,18 @@ print(f"Compaction metrics: {metrics_row}")
 
 # Enforce the D2 compaction SLA. A stale or fragmented table fails here so it
 # pages someone instead of silently degrading queries and the DirectLake gate.
-# NOTE: storage-layout.contract.json currently carries PILOT TEST thresholds
-# (minAvgFileSizeMB=0.01, maxSmallFileFraction=1.0, smallFileThresholdMB=0.01)
-# so that synthetic test data passes. Before running against real billing data,
-# restore the production values in the contract:
-#   minAvgFileSizeMB=64, maxSmallFileFraction=0.10, smallFileThresholdMB=16
-result = validate_compaction_sla(metrics_row, str(_STORAGE_CONTRACT), now=run_ts)
+# The contract carries PRODUCTION thresholds. A small pilot/test dataset cannot
+# reach the 64MB production floor, so pass pilot-scale overrides here to keep the
+# gate meaningful on synthetic data. Remove `sla_overrides` (or set it to None)
+# for real billing data so the contract's production thresholds apply.
+pilot_sla_overrides = {
+    "minAvgFileSizeMB": 0.01,
+    "maxSmallFileFraction": 1.0,
+    "smallFileThresholdMB": 0.01,
+}
+result = validate_compaction_sla(
+    metrics_row, str(_STORAGE_CONTRACT), now=run_ts, sla_overrides=pilot_sla_overrides
+)
 for warning in result.warnings:
     print(f"WARN: {warning}")
 

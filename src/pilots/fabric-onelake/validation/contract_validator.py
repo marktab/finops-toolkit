@@ -207,6 +207,7 @@ def validate_compaction_sla(
     metrics: Mapping[str, object],
     contract_path: str | Path,
     now: datetime | None = None,
+    sla_overrides: Mapping[str, object] | None = None,
 ) -> ValidationResult:
     """Validate the latest compaction run against the D2 SLA.
 
@@ -220,6 +221,10 @@ def validate_compaction_sla(
             smallFileFractionAfter (number, 0..1).
         contract_path: Path to storage-layout.contract.json.
         now: Override for the current time (testing). Defaults to UTC now.
+        sla_overrides: Optional per-run overrides merged over the contract SLA
+            thresholds. Intended for small pilot/test datasets that cannot reach
+            the production file-size floor; production runs pass nothing here so
+            the contract's real thresholds apply.
 
     Raises:
         ContractViolation: on any breached SLA threshold.
@@ -227,6 +232,8 @@ def validate_compaction_sla(
     contract = load_storage_contract(contract_path)
     compaction = contract["compaction"]
     sla = compaction["sla"]
+    if sla_overrides:
+        sla = {**sla, **sla_overrides}
     enforcement = contract["enforcement"]
     now = now or datetime.now(timezone.utc)
     result = ValidationResult()

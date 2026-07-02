@@ -60,10 +60,10 @@
     "targetFileSizeRange": { "minMB": 64, "maxMB": 256 },
     "sla": {
       "maxHoursSinceLastSuccessfulRun": 26,
-      "minAvgFileSizeMB": 0.01,
-      "maxSmallFileFraction": 1.0,
-      "smallFileThresholdMB": 0.01,
-      "note": "PILOT TEST VALUES — these thresholds are set low so the SLA gate runs correctly against the 500-row synthetic dataset. Restore to production values before real data runs: minAvgFileSizeMB=64, maxSmallFileFraction=0.10, smallFileThresholdMB=16. The 26h staleness window is unchanged."
+      "minAvgFileSizeMB": 64,
+      "maxSmallFileFraction": 0.10,
+      "smallFileThresholdMB": 16,
+      "note": "26h tolerance allows one missed daily window before alerting. Breaching any threshold must raise an alert (Data Activator / monitoring), not silently degrade queries. These are PRODUCTION thresholds; a small pilot/test dataset that cannot reach the 64MB floor should pass pilot-scale sla_overrides to validate_compaction_sla at the call site (see 03_compaction) rather than lowering these values."
     },
     "metrics": {
       "description": "Emitted on every run to a location an alert can watch. These are the inputs to both the SLA check and the DirectLake-readiness gate.",
