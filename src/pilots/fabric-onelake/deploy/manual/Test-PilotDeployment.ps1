@@ -152,6 +152,17 @@ function Test-PilotDeployment
         throw "OneLake endpoint must be the OneLake DFS endpoint, not a blob endpoint."
     }
 
+    # --- Private networking guard (see issue #2061) --------------------------
+    # Microsoft Fabric ingests via impersonation (the caller's identity), NOT
+    # managed_identity=system as Azure Data Explorer does. The storage "trusted
+    # Microsoft services" firewall bypass therefore does not apply to Fabric, so
+    # ingestion from a private/firewalled storage account fails deep inside a
+    # notebook run with no clear cause. Fail loudly here at preflight instead.
+    if ($params.privateNetworking -eq $true)
+    {
+        throw "Private networking is not supported by this pilot. Microsoft Fabric ingests via impersonation, not managed_identity=system, so the storage 'trusted Microsoft services' bypass that works for Azure Data Explorer does NOT apply to Fabric (see https://github.com/microsoft/finops-toolkit/issues/2061). Deploy against a storage account reachable by the Fabric workspace identity, or track issue #2061 for private-networking support."
+    }
+
     # --- Optional live connectivity ------------------------------------------
     if ($TestConnectivity)
     {
@@ -160,12 +171,13 @@ function Test-PilotDeployment
 
     # --- Resolved, normalized output -----------------------------------------
     $resolved = @{
-        workspaceName   = $params.workspaceName
-        lakehouseName   = $params.lakehouseName
-        oneLakeEndpoint = $params.oneLakeEndpoint.TrimEnd('/')
-        sqlEndpoint     = $params.sqlEndpoint
-        capacityId      = $params.capacityId
-        environment     = if ($params.environment) { $params.environment } else { 'pilot' }
+        workspaceName     = $params.workspaceName
+        lakehouseName     = $params.lakehouseName
+        oneLakeEndpoint   = $params.oneLakeEndpoint.TrimEnd('/')
+        sqlEndpoint       = $params.sqlEndpoint
+        capacityId        = $params.capacityId
+        environment       = if ($params.environment) { $params.environment } else { 'pilot' }
+        privateNetworking = [bool]$params.privateNetworking
     }
 
     Write-Verbose "Preflight validation succeeded for workspace '$($resolved.workspaceName)'."

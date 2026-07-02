@@ -43,6 +43,11 @@
       "enum": ["pilot", "dev", "test"],
       "default": "pilot",
       "description": "Deployment environment label. Restricted to non-production while the manual path is being proven."
+    },
+    "privateNetworking": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set to true if the source storage account (or Lakehouse) is behind a private endpoint or storage firewall. Microsoft Fabric ingests via impersonation (the caller's identity), NOT managed_identity=system as Azure Data Explorer does, so the storage 'trusted Microsoft services' firewall bypass does NOT apply to Fabric. Declaring true here makes the preflight FAIL LOUDLY at deploy time instead of hanging deep in a notebook run with no clear cause. See https://github.com/microsoft/finops-toolkit/issues/2061. Leave false (or omit) for a storage account reachable by the Fabric workspace identity."
     }
   }
 }

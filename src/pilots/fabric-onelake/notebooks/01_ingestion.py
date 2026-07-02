@@ -38,10 +38,12 @@ from focus_pilot.schema_bridge import spark_schema_to_logical  # noqa: E402
 from contract_validator import (  # noqa: E402
     validate_focus_schema,
     validate_non_null,
+    validate_row_conservation,
 )
 
 _CONTRACTS = _PILOT_ROOT / "contracts"
 _SCHEMA_CONTRACT = _CONTRACTS / "focus-schema.contract.json"
+_STORAGE_CONTRACT = _CONTRACTS / "storage-layout.contract.json"
 
 # CELL ********************
 
@@ -77,5 +79,25 @@ print(f"Ingestion validated: {df.count()} rows, FOCUS {focus_version}, ingestion
 # Hand the validated DataFrame to the next notebook via a temp view / path.
 # In the ADF pipeline this is chained; here we persist a validated staging copy.
 _staging = f"{oneLakeEndpoint}/Files/_staging/{ingestion_id}"
+source_count = df.count()
 df.write.mode("overwrite").parquet(_staging)
-print(f"Validated data staged at {_staging}")
+
+# Row-count conservation (source -> staging): staging must contain exactly the
+# rows we just validated. A drift here is a silent ingestion loss (the #2173 /
+# #2180 class of hub bug), so fail loudly before notebook 02 consumes it.
+staged_count = spark.read.parquet(_staging).count()
+validate_row_conservation(source_count, staged_count, str(_STORAGE_CONTRACT), stage="ingestion->staging")
+
+# Write an authoritative batch manifest alongside the staging copy so the next
+# notebook can assert it consumed the COMPLETE batch (not a partial, lagging
+# OneLake listing) before writing to Delta — the cross-boundary #1625 / #2173
+# trap. Mirrors the toolkit hub's manifest.json row-count mechanism.
+_manifest_dir = f"{oneLakeEndpoint}/Files/_staging/{ingestion_id}_manifest"
+_manifest = {
+    "ingestionId": ingestion_id,
+    "expectedRowCount": staged_count,
+    "focusVersion": focus_version,
+}
+spark.createDataFrame([_manifest]).coalesce(1).write.mode("overwrite").json(_manifest_dir)
+
+print(f"Validated data staged at {_staging} ({staged_count} rows); manifest at {_manifest_dir}.")

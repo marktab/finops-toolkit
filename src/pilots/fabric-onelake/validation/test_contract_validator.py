@@ -11,9 +11,11 @@ from pathlib import Path
 
 from contract_validator import (
     ContractViolation,
+    validate_batch_completeness,
     validate_compaction_sla,
     validate_focus_schema,
     validate_non_null,
+    validate_row_conservation,
 )
 
 CONTRACTS = Path(__file__).resolve().parents[1] / "contracts"
@@ -117,6 +119,49 @@ def test_compaction_fails_on_fragmentation() -> None:
         "smallFileFractionAfter": 0.5,
     }
     _expect(True, lambda: validate_compaction_sla(metrics, STORAGE, now=now))
+
+
+def test_row_conservation_passes_when_equal() -> None:
+    result = validate_row_conservation(1000, 1000, STORAGE, stage="staging->delta")
+    assert result.warnings == []
+
+
+def test_row_conservation_passes_on_empty_hop() -> None:
+    # No data yet is conservation, not a violation.
+    result = validate_row_conservation(0, 0, STORAGE, stage="ingestion->staging")
+    assert result.warnings == []
+
+
+def test_row_conservation_fails_when_rows_dropped() -> None:
+    # The #2173 / #2180 class: rows silently lost across a hop.
+    _expect(True, lambda: validate_row_conservation(1000, 800, STORAGE, stage="staging->delta"))
+
+
+def test_row_conservation_fails_when_rows_added() -> None:
+    # The #1736 class: a hop inventing rows.
+    _expect(True, lambda: validate_row_conservation(1000, 1240, STORAGE, stage="staging->delta"))
+
+
+def test_row_conservation_fails_on_negative_count() -> None:
+    _expect(True, lambda: validate_row_conservation(-1, 0, STORAGE))
+
+
+def test_batch_completeness_passes_when_equal() -> None:
+    result = validate_batch_completeness(1000, 1000, STORAGE, stage="staging-read")
+    assert result.warnings == []
+
+
+def test_batch_completeness_fails_on_partial_read() -> None:
+    # The cross-boundary #1625 / #2173 trap: consumed a subset of the batch.
+    _expect(True, lambda: validate_batch_completeness(1000, 999, STORAGE, stage="staging-read"))
+
+
+def test_batch_completeness_fails_on_excess_read() -> None:
+    _expect(True, lambda: validate_batch_completeness(1000, 1001, STORAGE, stage="staging-read"))
+
+
+def test_batch_completeness_fails_on_negative_count() -> None:
+    _expect(True, lambda: validate_batch_completeness(-1, 0, STORAGE))
 
 
 def _run_all() -> None:

@@ -286,6 +286,107 @@ def validate_compaction_sla(
     return result
 
 
+def validate_row_conservation(
+    input_count: int,
+    output_count: int,
+    contract_path: str | Path,
+    stage: str = "write",
+) -> ValidationResult:
+    """Validate that a single materialization hop conserves row count.
+
+    The pilot copies/appends already-normalized FOCUS data; it does not
+    transform it (KQL stays the single transform owner, Decision 1). A hop that
+    changes the row count is therefore a silent corruption, not a valid result.
+    Real hub failures show up exactly this way with no error surfaced: extents
+    lost during multi-file ingestion, or rows dropped when a manifest row count
+    is null. This asserts input rows in == output rows out, within the contract's
+    (default zero) tolerance, and fails loudly on any drift so the pipeline stops
+    instead of feeding wrong totals downstream.
+
+    Args:
+        input_count: Rows read into the hop (e.g. source parquet, or staging).
+        output_count: Rows written out of the hop (e.g. staged copy, or the
+            Delta append's numOutputRows).
+        contract_path: Path to storage-layout.contract.json.
+        stage: Human-readable label for the hop, used in the error message.
+
+    Raises:
+        ContractViolation: on a negative count or on drift beyond the tolerance.
+    """
+    contract = load_storage_contract(contract_path)
+    result = ValidationResult()
+    if not contract["enforcement"].get("failOnRowCountDrift", True):
+        return result
+
+    if input_count < 0 or output_count < 0:
+        raise ContractViolation(
+            f"Row conservation at '{stage}' hop received a negative count: "
+            f"in={input_count}, out={output_count}."
+        )
+
+    tolerance_fraction = float(
+        contract.get("rowConservation", {}).get("maxRowCountDriftFraction", 0.0)
+    )
+    drift = abs(output_count - input_count)
+    allowed = input_count * tolerance_fraction
+    if drift > allowed:
+        raise ContractViolation(
+            f"Row count drift at '{stage}' hop: {input_count} row(s) in, "
+            f"{output_count} out (drift {drift}, allowed {allowed:g}). The pilot "
+            "only copies/appends FOCUS data, so a changed count is a silent loss "
+            "or duplication — stopping before it corrupts cost totals."
+        )
+    return result
+
+
+def validate_batch_completeness(
+    expected_count: int,
+    observed_count: int,
+    contract_path: str | Path,
+    stage: str = "read",
+) -> ValidationResult:
+    """Validate that a hop consumed the COMPLETE batch, not a partial listing.
+
+    Notebook 01 and notebook 02 run as separate executions connected only by
+    staging files in OneLake, whose listing can lag. If notebook 02 reads a
+    subset, its own row-conservation check still balances (it conserves whatever
+    it read), so the loss is silent — the cross-boundary form of the #1625 /
+    #2173 "processed a subset, assumed the whole" trap. This compares the count
+    actually observed against the authoritative expected count handed across the
+    boundary (the batch manifest) and fails loudly on any mismatch before a
+    partial batch reaches the Delta table.
+
+    Args:
+        expected_count: Authoritative row count from the upstream batch manifest.
+        observed_count: Rows actually read at this hop.
+        contract_path: Path to storage-layout.contract.json.
+        stage: Human-readable label for the hop, used in the error message.
+
+    Raises:
+        ContractViolation: on a negative count or any shortfall/excess.
+    """
+    contract = load_storage_contract(contract_path)
+    result = ValidationResult()
+    if not contract["enforcement"].get("failOnIncompleteBatch", True):
+        return result
+
+    if expected_count < 0 or observed_count < 0:
+        raise ContractViolation(
+            f"Batch completeness at '{stage}' hop received a negative count: "
+            f"expected={expected_count}, observed={observed_count}."
+        )
+
+    if observed_count != expected_count:
+        raise ContractViolation(
+            f"Incomplete batch at '{stage}' hop: upstream manifest expected "
+            f"{expected_count} row(s) but observed {observed_count}. A hop that "
+            "processes a subset while assuming it has the whole set (the #1625 / "
+            "#2173 trap) balances its own local counts and hides the loss — "
+            "stopping before a partial batch reaches the Delta table."
+        )
+    return result
+
+
 def _parse_iso(value: str) -> datetime:
     """Parse an ISO 8601 timestamp, tolerating a trailing 'Z'."""
     return datetime.fromisoformat(value.replace("Z", "+00:00"))

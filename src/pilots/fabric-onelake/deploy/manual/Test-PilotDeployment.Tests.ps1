@@ -63,6 +63,14 @@ Describe 'Test-PilotDeployment' {
             $result = Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath
             $result.environment | Should -Be 'pilot'
         }
+
+        It 'accepts privateNetworking set to false' {
+            $p = Get-GoodParams
+            $p['privateNetworking'] = $false
+            $path = New-TempParams -Params $p
+            $result = Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath
+            $result.privateNetworking | Should -Be $false
+        }
     }
 
     Context 'Hard failures' {
@@ -113,6 +121,14 @@ Describe 'Test-PilotDeployment' {
             $path = New-TempParams -Params $p
             { Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath } |
             Should -Throw
+        }
+
+        It 'throws when private networking is declared (issue #2061)' {
+            $p = Get-GoodParams
+            $p['privateNetworking'] = $true
+            $path = New-TempParams -Params $p
+            { Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath } |
+            Should -Throw -ExpectedMessage '*2061*'
         }
 
         It 'throws when the parameters file does not exist' {

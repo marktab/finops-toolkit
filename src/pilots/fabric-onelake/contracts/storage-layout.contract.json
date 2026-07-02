@@ -93,12 +93,26 @@
     "note": "minAvgFileSizeMB mirrors the compaction SLA floor so a table that passes compaction is sized appropriately for DirectLake memory-mapping."
   },
 
+  "rowConservation": {
+    "description": "Every materialization hop (source->staging in ingestion, staging->Delta in the write) must neither drop nor invent rows. Real hub failures change the row count with NO error: extents silently lost during multi-file ingestion, or rows dropped when a manifest row count is null. The notebooks capture the input and output counts of each hop and hand them to validate_row_conservation, which fails loudly on any drift beyond the tolerance below so a silent loss stops the pipeline instead of corrupting cost totals downstream.",
+    "maxRowCountDriftFraction": 0.0,
+    "note": "0.0 means exact conservation (input count must equal output count). This is a physical copy/append, not a transform, so no rows should be added or removed; KQL remains the single transform owner (Decision 1). Raise this only if a hop legitimately dedupes or filters, and document why."
+  },
+
+  "batchHandoff": {
+    "description": "Ingestion (notebook 01) and the Delta write (notebook 02) run as separate executions connected only by staging files in OneLake, whose listing can lag (see README OneLake sync notes). A partial staging read in notebook 02 would still pass that notebook's own row-conservation check because it conserves whatever subset it read — the loss is silent. This is the cross-boundary form of the #1625 / #2173 'processed a subset, assumed the whole' trap. To close it, notebook 01 writes an authoritative batch manifest (expected row count) and notebook 02 asserts, via validate_batch_completeness, that it consumed exactly that many rows before writing anything to Delta.",
+    "manifestSuffix": "_manifest",
+    "note": "Mirrors how the toolkit hub uses manifest.json row counts — the exact mechanism issue #2173 shows failing when the count is null. The manifest count is authoritative, so completeness is an exact-equality check with no tolerance."
+  },
+
   "enforcement": {
     "description": "Policy applied by the compaction notebook and the readiness gate. Every rule maps to a silent-failure scenario from the decision deck.",
     "failOnStaleCompaction": true,
     "failOnSmallFileFractionExceeded": true,
     "failOnAvgFileSizeBelowMin": true,
     "failOnZorderColumnMissing": true,
-    "warnOnProvisionalZorderUnvalidated": true
+    "warnOnProvisionalZorderUnvalidated": true,
+    "failOnRowCountDrift": true,
+    "failOnIncompleteBatch": true
   }
 }
