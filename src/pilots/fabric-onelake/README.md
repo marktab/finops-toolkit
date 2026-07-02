@@ -31,6 +31,30 @@ contract is enforced by code that **stops loudly** rather than a doc nobody re-c
 Before any of that, run the fail-loud preflight in `deploy/manual/` against your
 filled-in parameters (`deploy/manual/deploy-parameters.sample.json` is the template).
 
+## Running the notebooks in Fabric
+
+A few setup facts that are easy to miss the first time:
+
+1. **Upload the support folders to the Lakehouse Files area.** The notebooks import
+   their helpers and load their contracts from `/lakehouse/default/Files` (the
+   `_PILOT_ROOT` at the top of each notebook). Upload `notebooks/` (which includes
+   `lib/`), `contracts/`, and `validation/` into **Files** so those imports resolve.
+   In the portal: Lakehouse **> Files > Upload > Upload folder**.
+2. **Import each `.py` as a Notebook item — separately from the Files copy.** The `.py`
+   file you upload to Files is just source on disk; it is not runnable. Import each one
+   as a workspace Notebook (**Import > Notebook > From this computer**) to get a
+   runnable item with a **Run all** button. Having the file in both places is normal.
+3. **Attach and set the default Lakehouse in EVERY notebook.** Without a default
+   Lakehouse, `/lakehouse/default/Files` does not resolve and the imports fail. In each
+   notebook: **Add data items** (Explorer pane) **> FinOpsLakehouse >** right-click **>
+   Set as default lakehouse**. This is per-notebook, not once per workspace.
+4. **`_PILOT_ROOT` matches an upload directly under `Files`** (so `Files/notebooks/lib`,
+   `Files/contracts`, `Files/validation`). If you upload the folders somewhere else,
+   update `_PILOT_ROOT` at the top of each notebook to match.
+5. **The DirectLake gate (04) returns NO-GO on small datasets by design.** That is a
+   correct, reasoned verdict — tiny test data cannot meet the DirectLake guardrails.
+   The SQL endpoint path still works; DirectLake is earned over a full billing cycle.
+
 ## Endpoints by cloud
 
 The two endpoints you supply — the OneLake ABFSS path and the SQL analytics endpoint —
@@ -41,7 +65,12 @@ throughout this pilot target the **public commercial cloud**.
 |---|---|---|
 | **Commercial** (default) | `onelake.dfs.fabric.microsoft.com` | `.datawarehouse.fabric.microsoft.com` |
 | **Microsoft internal (msit)** | `msit-onelake.dfs.fabric.microsoft.com` | `.msit-datawarehouse.fabric.microsoft.com` |
-| **Sovereign** (Gov / air-gapped) | your cloud's OneLake DFS host | your cloud's SQL endpoint suffix |
+| **Sovereign** (Gov / China) | *placeholder — supply your host* | *placeholder — supply your suffix* |
+
+> **Sovereign clouds:** Microsoft Fabric is generally available in the commercial cloud
+> today; its availability and endpoint hosts in Azure Government and Azure China are still
+> emerging. The pilot ships **placeholders** for those clouds rather than guessing hosts —
+> supply the real values (from the portal) when Fabric is available in your cloud.
 
 ### Where to find your values (authoritative source)
 
@@ -56,13 +85,41 @@ authoritative and immediately tells you which host your cloud uses.
 ### Sovereign cloud
 
 The pilot **defaults to commercial** and also accepts the Microsoft-internal (msit)
-hosts out of the box. For a sovereign cloud, keep the same shape and substitute your
-cloud's host in these three places:
+hosts out of the box. It follows the toolkit's existing `-AzureEnvironment` convention
+(the same names the optimization engine uses: `AzureCloud`, `AzureUSGovernment`,
+`AzureChinaCloud`) and a Bicep-style lookup map with explicit overrides — sovereign
+entries are placeholders until Fabric publishes those endpoints. To target a sovereign
+cloud, keep the same shape and substitute your cloud's host in these places:
 
 1. `deploy/manual/deploy-parameters.schema.json` — widen the `oneLakeEndpoint` and
    `sqlEndpoint` regex patterns to include your suffix.
-2. `deploy/automation/Initialize-PilotFabric.ps1` — pass `-OneLakeHost` with your
-   cloud's OneLake DFS host (the SQL endpoint is read back from the Fabric API, so it
-   is already correct). You may also need `-ApiBaseUrl` for your cloud's Fabric API.
+2. `deploy/automation/Initialize-PilotFabric.ps1` — pass `-AzureEnvironment` for your
+   cloud plus `-OneLakeHost` and `-ApiBaseUrl` with your cloud's hosts (the lookup-map
+   entries for sovereign clouds are empty placeholders and will fail loudly until you
+   supply them). The SQL endpoint is read back from the Fabric API, so it needs no config.
 3. `power-bi/expressions.fabric.tmdl` — extend the `START HERE` suffix check with your
    cloud's SQL endpoint suffix.
+
+This mirrors how the rest of the toolkit handles sovereign clouds: Bicep hubs use ARM's
+built-in `environment().suffixes` and, where a service isn't covered, a lookup map keyed
+by `environment().name` (see `Analytics/app.bicep`); the storage Power BI report takes the
+full storage URL as a parameter. The pilot's manual endpoints work the same way — you
+paste the full host — so the manual path is already sovereign-friendly.
+
+## Known issues on Microsoft-internal (msit) and sovereign tenants
+
+These are environment quirks, not pilot bugs — you will hit them on msit and possibly on
+sovereign/air-gapped tenants, and the fix is operational:
+
+- **OneLake File Explorer (desktop app) may not sync** — it can report *"not in sync with
+  the cloud" / "Location is not available"* on msit even when signed in with the correct
+  account, because it targets the commercial OneLake. **Upload through the Fabric portal
+  instead** (Lakehouse **> Files > Upload > Upload folder**).
+- **The local `/lakehouse/default` mount can fail for writes** on msit. Read/import via the
+  mount works once a default Lakehouse is attached, but write via the **ABFSS endpoint**
+  instead (see `notebooks/00_generate_sample_focus.py`, which writes to `ABFSS_ROOT`).
+- **Trial and low-SKU capacities throttle** after Spark notebook runs. Symptoms:
+  `DataSource.CapacityExceeded` in Power BI, or *"your organization's Fabric compute
+  capacity has exceeded its limits"*. **Stop notebook Spark sessions** (each notebook's
+  **Stop session**, or the **Monitor** hub) and retry after a few minutes. This is a
+  capacity limit, not a connection or schema error — the swap/query is already correct.

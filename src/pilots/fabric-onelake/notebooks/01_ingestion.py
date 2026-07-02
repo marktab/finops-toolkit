@@ -26,6 +26,10 @@ import sys
 from pathlib import Path
 
 # Make the pilot library and the Phase 1 validator importable.
+# REQUIRES a default Lakehouse attached to this notebook (Explorer > Add data items >
+# your Lakehouse > Set as default lakehouse) or /lakehouse/default will not resolve.
+# _PILOT_ROOT assumes notebooks/, contracts/, and validation/ were uploaded directly
+# under the Lakehouse Files area. Adjust if you uploaded them elsewhere. See README.md.
 _PILOT_ROOT = Path("/lakehouse/default/Files")  # adjust to deployed path
 for _p in (_PILOT_ROOT / "notebooks" / "lib", _PILOT_ROOT / "validation"):
     sys.path.insert(0, str(_p))

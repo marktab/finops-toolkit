@@ -34,8 +34,20 @@
     .PARAMETER ParametersPath
     Optional. Path to write the resolved deployment parameters file. Default: ./deploy-parameters.generated.json.
 
+    .PARAMETER AzureEnvironment
+    Optional. Target Azure cloud (AzureCloud, AzureUSGovernment, AzureChinaCloud), matching the
+    -AzureEnvironment convention used elsewhere in the toolkit. Drives the OneLake DFS host and
+    Fabric API base via lookup maps. Default: AzureCloud. Sovereign entries are placeholders until
+    Fabric publishes those endpoints; use -OneLakeHost / -ApiBaseUrl to supply them explicitly.
+
     .PARAMETER ApiBaseUrl
-    Optional. Fabric REST API base URL. Default: https://api.fabric.microsoft.com/v1.
+    Optional. Explicit override for the Fabric REST API base URL. Empty resolves from -AzureEnvironment
+    (AzureCloud default: https://api.fabric.microsoft.com/v1). Required for sovereign clouds.
+
+    .PARAMETER OneLakeHost
+    Optional. Explicit override for the OneLake DFS host used to build the ABFSS endpoint. Empty
+    resolves from -AzureEnvironment. Supply directly for Microsoft-internal (msit-onelake.dfs.fabric.microsoft.com)
+    or sovereign clouds (copy from the Lakehouse > Properties ABFSS path).
 
     .EXAMPLE
     $token = (Get-AzAccessToken -ResourceUrl 'https://api.fabric.microsoft.com').Token
@@ -47,6 +59,12 @@
     Initialize-PilotFabric -WorkspaceName 'FinOps Pilot' -LakehouseName 'FinOpsHub' -AccessToken $token -WhatIf
 
     Shows what would be created without making changes.
+
+    .EXAMPLE
+    Initialize-PilotFabric -WorkspaceName 'FinOps Pilot' -LakehouseName 'FinOpsHub' -AccessToken $token `
+        -OneLakeHost 'msit-onelake.dfs.fabric.microsoft.com'
+
+    Targets a Microsoft-internal (msit) tenant by supplying the OneLake host explicitly.
 
     .OUTPUTS
     System.Collections.Hashtable. The resolved, validated deployment parameters.
@@ -77,24 +95,71 @@ function Initialize-PilotFabric
         [string]
         $ParametersPath = (Join-Path -Path $PSScriptRoot -ChildPath 'deploy-parameters.generated.json'),
 
+        # Target Azure cloud, using the same names as the rest of the toolkit
+        # (for example the optimization engine's -AzureEnvironment). Drives the
+        # OneLake DFS host and Fabric API base via the lookup maps below. Defaults
+        # to the public commercial cloud.
+        #
+        # NOTE: Microsoft Fabric is generally available in AzureCloud today; its
+        # availability and endpoint hosts in sovereign clouds (AzureUSGovernment,
+        # AzureChinaCloud) are still emerging. Those entries are PLACEHOLDERS: when
+        # you target a sovereign cloud you must supply -OneLakeHost (and usually
+        # -ApiBaseUrl) explicitly until the sovereign Fabric endpoints are published.
+        [Parameter(Mandatory = $false)]
+        [ValidateSet('AzureCloud', 'AzureUSGovernment', 'AzureChinaCloud')]
+        [string]
+        $AzureEnvironment = 'AzureCloud',
+
+        # Explicit override for the Fabric REST API base URL. Leave empty to resolve
+        # it from -AzureEnvironment. Required for sovereign clouds (placeholder maps).
         [Parameter(Mandatory = $false)]
         [string]
-        $ApiBaseUrl = 'https://api.fabric.microsoft.com/v1',
+        $ApiBaseUrl = '',
 
-        # OneLake DFS host used to build the ABFSS endpoint. Defaults to the public
-        # commercial cloud. Override this for non-commercial clouds:
-        #   Commercial (default) : onelake.dfs.fabric.microsoft.com
-        #   Microsoft internal   : msit-onelake.dfs.fabric.microsoft.com
-        #   Sovereign clouds     : the OneLake DFS host for your cloud (for example a
-        #                          US Gov / air-gapped tenant uses that cloud's host).
-        #                          Confirm the exact host in the Lakehouse > Properties
-        #                          ABFSS path, which is authoritative for your tenant.
+        # Explicit override for the OneLake DFS host used to build the ABFSS endpoint.
+        # Leave empty to resolve it from -AzureEnvironment. Supply this directly for:
+        #   Microsoft internal (msit) : msit-onelake.dfs.fabric.microsoft.com
+        #                               (msit is not a distinct AzureEnvironment value)
+        #   Sovereign clouds          : the OneLake DFS host for your cloud, copied from
+        #                               the Lakehouse > Properties ABFSS path (authoritative).
         # The SQL endpoint is NOT built here: it is read back from the Fabric API
         # response below, so it is always correct for whatever cloud you are in.
         [Parameter(Mandatory = $false)]
         [string]
-        $OneLakeHost = 'onelake.dfs.fabric.microsoft.com'
+        $OneLakeHost = ''
     )
+
+    # --- Resolve cloud endpoints (toolkit -AzureEnvironment convention) ----------
+    # Mirrors the Bicep lookup-map pattern (see Analytics/app.bicep dataExplorerDnsSuffixLookup):
+    # a map keyed by the cloud name, with an explicit override taking precedence. Sovereign
+    # entries are intentionally empty PLACEHOLDERS until Fabric publishes those endpoints;
+    # supplying -OneLakeHost / -ApiBaseUrl overrides them.
+    $oneLakeHostLookup = @{
+        AzureCloud        = 'onelake.dfs.fabric.microsoft.com'
+        AzureUSGovernment = ''   # placeholder: supply -OneLakeHost until sovereign Fabric endpoints are published
+        AzureChinaCloud   = ''   # placeholder: supply -OneLakeHost until sovereign Fabric endpoints are published
+    }
+    $apiBaseUrlLookup = @{
+        AzureCloud        = 'https://api.fabric.microsoft.com/v1'
+        AzureUSGovernment = ''   # placeholder: supply -ApiBaseUrl until sovereign Fabric endpoints are published
+        AzureChinaCloud   = ''   # placeholder: supply -ApiBaseUrl until sovereign Fabric endpoints are published
+    }
+
+    $resolvedOneLakeHost = if ($OneLakeHost) { $OneLakeHost } else { $oneLakeHostLookup[$AzureEnvironment] }
+    $resolvedApiBaseUrl = if ($ApiBaseUrl) { $ApiBaseUrl } else { $apiBaseUrlLookup[$AzureEnvironment] }
+
+    if ([string]::IsNullOrWhiteSpace($resolvedOneLakeHost))
+    {
+        throw "No OneLake DFS host is defined for '$AzureEnvironment'. Microsoft Fabric endpoints for this cloud are not yet published; pass -OneLakeHost with the host from your Lakehouse > Properties ABFSS path."
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedApiBaseUrl))
+    {
+        throw "No Fabric API base URL is defined for '$AzureEnvironment'. Microsoft Fabric endpoints for this cloud are not yet published; pass -ApiBaseUrl with your cloud's Fabric REST API base URL."
+    }
+
+    # From here on, use the resolved values so all API calls and the ABFSS endpoint
+    # target the correct cloud.
+    $ApiBaseUrl = $resolvedApiBaseUrl
 
     $headers = @{
         Authorization  = "Bearer $AccessToken"
@@ -151,10 +216,10 @@ function Initialize-PilotFabric
 
     # --- Resolve endpoints -------------------------------------------------------
     # OneLake ABFSS path is deterministic from workspace + lakehouse names. The host
-    # segment differs by cloud (see the -OneLakeHost parameter): commercial uses
-    # onelake.dfs.fabric.microsoft.com, Microsoft-internal uses msit-onelake..., and
-    # sovereign clouds use their own host. Only the host varies; the shape is identical.
-    $oneLakeEndpoint = "abfss://$WorkspaceName@$OneLakeHost/$LakehouseName.Lakehouse"
+    # segment ($resolvedOneLakeHost) is chosen by -AzureEnvironment / -OneLakeHost above:
+    # commercial uses onelake.dfs.fabric.microsoft.com, msit uses msit-onelake..., and
+    # sovereign clouds supply their own host. Only the host varies; the shape is identical.
+    $oneLakeEndpoint = "abfss://$WorkspaceName@$resolvedOneLakeHost/$LakehouseName.Lakehouse"
 
     # SQL endpoint comes from the Lakehouse properties (may take a moment to provision).
     # We read it back from the API rather than constructing it, so it is automatically
