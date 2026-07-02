@@ -23,14 +23,17 @@
 (optional datasetType as text) =>
 let
     // Map the toolkit dataset alias to its Delta table name.
+    // Fabric lowercases Lakehouse table names at the SQL analytics endpoint, and the
+    // endpoint is case-sensitive for navigation, so these MUST be lowercase to match
+    // what the endpoint exposes (e.g. saveAsTable("Costs") is queried as dbo.costs).
     data = if datasetType <> null and datasetType <> "" then Text.Lower(datasetType) else "focuscost",
     tableName =
-        if data = "focuscost" then "Costs"
-        else if data = "pricesheet" then "Prices"
-        else if data = "reservationdetails" then "CommitmentDiscountUsage"
-        else if data = "reservationrecommendations" then "Recommendations"
-        else if data = "reservationtransactions" then "Transactions"
-        else "Costs",
+        if data = "focuscost" then "costs"
+        else if data = "pricesheet" then "prices"
+        else if data = "reservationdetails" then "commitmentdiscountusage"
+        else if data = "reservationrecommendations" then "recommendations"
+        else if data = "reservationtransactions" then "transactions"
+        else "costs",
 
     // Resolve the date window the same way the storage variant does.
     end = if RangeEnd <> null then Date.From(RangeEnd, Culture.Current) else null,

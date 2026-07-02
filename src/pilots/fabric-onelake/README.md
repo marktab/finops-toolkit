@@ -149,6 +149,7 @@ A quick symptom → cause → fix reference for the issues most likely to appear
 | `DirectLake NO-GO` on small data | Dataset too small to meet DirectLake guardrails | Expected and correct; the SQL endpoint path still works |
 | `DataSource.CapacityExceeded` in Power BI | Trial Spark sessions still consuming capacity | Stop notebook sessions (**Monitor** hub) and retry after a few minutes |
 | Power BI refresh prompts for an Azure Blob storage account | Other report tables still point to storage | Expected — only `Costs` is swapped; cancel the prompt |
+| SQL endpoint: `Invalid object name 'Costs'` | Fabric lowercases Lakehouse table names at the SQL analytics endpoint | Query the lowercase name (`dbo.costs`); the shipped `ftk_FabricSql.pq` already uses lowercase |
 
 ## Known issues on Microsoft-internal (msit) and sovereign tenants
 

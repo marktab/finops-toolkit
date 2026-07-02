@@ -68,3 +68,7 @@ it keeps `tag_*` columns available for any visual that references them.
   `expressions.fabric.tmdl`. See the pilot [README](../README.md#endpoints-by-cloud).
 - **DirectLake:** this swap targets the SQL endpoint only. DirectLake is authorized
   separately by the readiness gate (`notebooks/04_directlake_readiness.py`), not here.
+- **Table name casing:** Fabric lowercases Lakehouse table names at the SQL analytics
+  endpoint (a table created as `Costs` is queried as `dbo.costs`), and the endpoint is
+  case-sensitive. `ftk_FabricSql.pq` already uses lowercase names to match; if you add
+  tables, use their lowercase endpoint names.
