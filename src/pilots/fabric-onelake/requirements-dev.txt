@@ -1,0 +1,14 @@
+# Test dependencies for the Fabric / OneLake pilot.
+#
+# The 57 pure unit tests need only pytest. test_restatement_spark.py additionally
+# needs a real Delta engine to prove that a re-run does not duplicate cost data --
+# a failure that balances every per-hop row count, so no pure-logic test can catch
+# it. That module is skipped when pyspark or delta-spark is absent, so this file is
+# optional for local runs and required in CI.
+#
+# Only delta-spark is pinned. It declares the compatible pyspark range itself, so
+# resolving pyspark through it makes the package metadata guarantee the Spark/Delta
+# pairing rather than a hand-maintained pair here that can silently drift apart.
+# Delta 4.x requires Java 17.
+pytest==8.3.4
+delta-spark==4.0.0
