@@ -86,6 +86,13 @@ Three values have no defaults, on purpose — a wrong default here fails silentl
 | `directLake.maxRows` / `maxFiles` / `minAvgFileSizeMB` | `contracts/storage-layout.contract.json` | Direct Lake limits vary by Fabric capacity SKU. A permissive default would let the layout precondition pass on a capacity that cannot serve the table — the exact silent failure the gate exists to catch. Look up the limits published for your SKU and record them. |
 | `sla_overrides` | `notebooks/03_compaction.py` parameters cell | Empty means the contract's production thresholds apply. Only set it for synthetic test data that cannot reach the 64MB floor. |
 
+You also supply `oneLakeEndpoint`, `source_path`, and `ingestion_id` in the notebook
+parameter cells, and a filled-in `deploy/manual/deploy-parameters.json` for the preflight.
+
+**Runtime prerequisite:** notebooks 04 and 05 end with `notebookutils.notebook.exit(...)`,
+which requires **Fabric Runtime 1.2 or later**. On an older runtime they fail on the final
+cell only — everything before it still runs — so the symptom looks unrelated to the runtime.
+
 ## Running the notebooks in Fabric
 
 A few setup facts that are easy to miss the first time:
@@ -230,6 +237,22 @@ and on Windows also `winutils.exe` with `HADOOP_HOME` set. Rather than ask every
 contributor for that, CI runs it on every change to this folder
 (`.github/workflows/pilot-fabric-onelake.yml`) — so the module is expected to show as
 skipped locally and to actually execute in the pipeline.
+
+### What the tests do not prove
+
+Worth stating plainly before anyone treats a green run as clearance for production:
+
+- **CI is not Fabric.** The behavioural tests run on the pinned `pyspark` / `delta-spark`
+  pair in `requirements-dev.txt`, which is a newer Spark and Delta than the Fabric runtime
+  ships. `replaceWhere` is long-stable API and is expected to behave identically, but the
+  combination this pilot relies on — `replaceWhere` with `partitionBy` and `mergeSchema` on
+  `saveAsTable` — has not been exercised on a Fabric runtime. Confirm it there first.
+- **Nothing here touches OneLake, the SQL analytics endpoint, or a semantic model.** No
+  test covers ABFSS paths, the Lakehouse catalog, Direct Lake, or capacity behaviour.
+- **No test uses real billing data.** Restatement is proven against synthetic months, not
+  against a real closed-month correction from Cost Management — which is the single most
+  valuable thing to try on a real capacity, because it is the scenario the replace-on-write
+  design exists for.
 
 ## Pilot status and graduation
 

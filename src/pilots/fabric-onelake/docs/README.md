@@ -185,6 +185,13 @@ These prove the logic and contract enforcement. They intentionally do not prove 
 end-to-end run against a live Fabric Lakehouse, which requires a Fabric capacity and a
 full billing cycle to validate the promotion gate and the cost-ceiling claim.
 
+Two limits are worth naming rather than leaving implied. First, the behavioural tests run
+on the `pyspark` / `delta-spark` pair pinned in `requirements-dev.txt`, which is a newer
+Spark and Delta than the Fabric runtime ships; `replaceWhere` is long-stable API, but the
+combination the pilot depends on has not been exercised on a Fabric runtime. Second,
+nothing in the suite touches OneLake, the SQL analytics endpoint, or a semantic model, so
+a green run says the logic is right, not that the platform integration works.
+
 ## For roadmap consideration
 
 The pilot deliberately targets the common case: a standard, reliable, high-volume
