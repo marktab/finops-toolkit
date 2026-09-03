@@ -11,7 +11,7 @@ The pilot follows four design principles:
 - **KQL stays the single transform owner**<br>_The pilot validates the FOCUS data the toolkit already produces; it does not re-implement normalization in Spark._
 - **Managed Delta, not shortcuts**<br>_Only managed Delta tables can be compacted and Z-ordered to remove the small-file query ceiling._
 - **Prove the manual path first**<br>_The manual deployment is built and proven before automation, so the automation is a convenience over a known-good path — not a single point of failure._
-- **DirectLake is earned, not assumed**<br>_Power BI connects to the SQL analytics endpoint first; a readiness gate must pass over a full billing cycle before DirectLake is enabled._
+- **Direct Lake is earned, not assumed**<br>_Power BI connects to the SQL analytics endpoint first; a layout precondition must hold over a full billing cycle, and a semantic model must be measured, before Direct Lake is enabled._
 
 Behind all four is one idea: each of these is a *silent* failure if it goes wrong, so
 every contract is enforced by code that stops loudly the moment reality drifts, rather
@@ -20,10 +20,24 @@ than a convention written in a doc that no one re-checks.
 ## Why this pilot?
 
 The toolkit's storage-based Power BI path serves cost data well until an organization's
-spend grows large — around \$2–5M/month — at which point the data is split across many
-small Parquet files that can't be compacted, and reports slow down. There has not been a
-Microsoft Fabric / OneLake path that removes that ceiling. This pilot adds one, without
-re-owning the data transform or disrupting anything already deployed.
+spend grows large, at which point the data is split across many small Parquet files that
+can't be compacted, and reports slow down. (The toolkit's own guidance puts the storage
+path's practical limit at roughly \$1M/month in monitored spend; where exactly reports
+become unusable is workload-dependent and this pilot has not yet measured it on real data.)
+
+The toolkit already has a Microsoft Fabric path: FinOps hubs can use **Fabric Real-Time
+Intelligence (RTI)** — an eventhouse — as a primary or secondary data store, and that is
+the recommended option today for the best performance and functionality. What has not
+existed is a **OneLake Delta** path: cost data materialized as a managed Delta table that
+can be compacted, served through the SQL analytics endpoint, and eventually carry a Direct
+Lake semantic model. This pilot adds one, without re-owning the data transform or
+disrupting anything already deployed.
+
+> **If you already run FinOps hubs on Fabric RTI**, evaluate the eventhouse's OneLake
+> availability feature before adopting this pilot: it mirrors KQL tables into OneLake as
+> Delta with no Spark pipeline to operate. The trade-off is that mirrored tables are
+> read-only, so you cannot compact or Z-order them — which is exactly what this pilot
+> exists to do. See [For roadmap consideration](docs/README.md#for-roadmap-consideration).
 
 ## What's different from the storage path
 
@@ -33,8 +47,9 @@ If you already know the storage-based hub and reports, here is what changes:
 |---|---|---|
 | **Where cost data lands** | Azure Data Explorer (KQL) or Parquet in storage | Managed Delta table in OneLake |
 | **Who owns the data shape** | KQL transform | **Still KQL** — the pilot only *validates* the output against a contract; it does not re-implement normalization in Spark |
-| **Small-file ceiling** | Reports slow near \$2–5M/month because many small files can't be compacted | Managed Delta is compacted daily (OPTIMIZE + Z-ORDER), removing the ceiling |
-| **Power BI connection** | Import / DirectQuery over storage | SQL analytics endpoint first; **DirectLake is earned**, gated by a readiness check, not assumed |
+| **Small-file ceiling** | Reports slow as monitored spend grows, because many small files can't be compacted | Managed Delta is compacted daily (OPTIMIZE + Z-ORDER), removing the ceiling |
+| **How restatements land** | Handled upstream by the hub | Each batch is a full snapshot of the charge months it covers, and those months are **replaced** atomically — never appended |
+| **Power BI connection** | Import / DirectQuery over storage | SQL analytics endpoint; **Direct Lake is earned**, gated by a layout precondition plus a measured semantic model, not assumed |
 | **How contracts are enforced** | Documented conventions | Machine-readable contracts (`contracts/`) that **fail loudly** in code when reality drifts |
 
 ## What's included
@@ -50,14 +65,26 @@ If you already know the storage-based hub and reports, here is what changes:
 
 1. `notebooks/00_generate_sample_focus.py` — optional: generates a small synthetic
    FOCUS 1.2 dataset so you can prove the pipeline end-to-end without real data.
+   Set `ABFSS_ROOT` to your Lakehouse path first; it has no default.
 2. `notebooks/01_ingestion.py` — schema-validated ingestion (Decision 1).
-3. `notebooks/02_delta_write.py` — managed Delta write, partitioned by `x_ChargeMonth` (Decision 2).
+3. `notebooks/02_delta_write.py` — managed Delta write, partitioned by `x_ChargeMonth`,
+   replacing the batch's charge months rather than appending (Decision 2).
 4. `notebooks/03_compaction.py` — compaction with monitored SLA metrics (Decision 2).
-5. `notebooks/04_directlake_readiness.py` — GO / NO-GO DirectLake gate (Decision 4).
+5. `notebooks/04_directlake_readiness.py` — Direct Lake layout precondition (Decision 4).
 6. `notebooks/05_promotion.py` — promotion decision.
 
 Before any of that, run the fail-loud preflight in `deploy/manual/` against your
 filled-in parameters (`deploy/manual/deploy-parameters.sample.json` is the template).
+
+## Before your first run
+
+Three values have no defaults, on purpose — a wrong default here fails silently:
+
+| What | Where | Why there is no default |
+|---|---|---|
+| `ABFSS_ROOT` | `notebooks/00_generate_sample_focus.py` | The OneLake host differs by cloud; copy it from Lakehouse **> Properties**. |
+| `directLake.maxRows` / `maxFiles` / `minAvgFileSizeMB` | `contracts/storage-layout.contract.json` | Direct Lake limits vary by Fabric capacity SKU. A permissive default would let the layout precondition pass on a capacity that cannot serve the table — the exact silent failure the gate exists to catch. Look up the limits published for your SKU and record them. |
+| `sla_overrides` | `notebooks/03_compaction.py` parameters cell | Empty means the contract's production thresholds apply. Only set it for synthetic test data that cannot reach the 64MB floor. |
 
 ## Running the notebooks in Fabric
 
@@ -79,9 +106,9 @@ A few setup facts that are easy to miss the first time:
 4. **`_PILOT_ROOT` matches an upload directly under `Files`** (so `Files/notebooks/lib`,
    `Files/contracts`, `Files/validation`). If you upload the folders somewhere else,
    update `_PILOT_ROOT` at the top of each notebook to match.
-5. **The DirectLake gate (04) returns NO-GO on small datasets by design.** That is a
-   correct, reasoned verdict — tiny test data cannot meet the DirectLake guardrails.
-   The SQL endpoint path still works; DirectLake is earned over a full billing cycle.
+5. **The layout precondition (04) is blocked on small datasets by design.** That is a
+   correct, reasoned verdict — tiny test data cannot meet the Direct Lake guardrails.
+   The SQL endpoint path still works; Direct Lake is earned over a full billing cycle.
 
 ## Endpoints by cloud
 
@@ -145,8 +172,11 @@ A quick symptom → cause → fix reference for the issues most likely to appear
 | `ModuleNotFoundError` importing `focus_pilot` or `contract_validator` | No default Lakehouse attached, or support folders not uploaded | Attach + set default Lakehouse; upload `notebooks/`, `contracts/`, `validation/` to Files |
 | `FileNotFoundError` on `FocusCost_1.2-preview.json` | Column-source file not uploaded with the contracts | Re-upload the `contracts/` folder |
 | `ContractViolation: ... expected json, got string` | Older contract mapped JSON columns to `json` | Re-upload the current `contracts/` (JSON maps to `string`) |
-| `ContractViolation: average file size below floor` on tiny data | Production SLA thresholds vs. synthetic test data | Expected on small data; contract ships pilot-scale thresholds — restore production values before real data |
-| `DirectLake NO-GO` on small data | Dataset too small to meet DirectLake guardrails | Expected and correct; the SQL endpoint path still works |
+| `ContractViolation: average file size below floor` on tiny data | Production SLA thresholds vs. synthetic test data | Set `sla_overrides` in the 03 parameters cell for pilot data; leave it empty for real billing data |
+| `GuardrailsNotConfigured` in notebook 04 | `directLake` limits are unset in the storage contract | Expected on a fresh clone — record the limits published for your Fabric capacity SKU |
+| `ImplausibleRestatement` in notebook 02 | The batch wrote far fewer rows than it replaced | Usually a truncated source export. Verify the export before overriding `min_restatement_row_ratio` |
+| `ActiveFileMismatch` in notebook 03 | Listing paths and Delta-log paths could not be reconciled | Report it — the metrics would otherwise be fabricated. Do not work around it by ignoring the listing |
+| Layout precondition blocked on small data | Dataset too small to meet the guardrails | Expected and correct; the SQL endpoint path still works |
 | `DataSource.CapacityExceeded` in Power BI | Trial Spark sessions still consuming capacity | Stop notebook sessions (**Monitor** hub) and retry after a few minutes |
 | Power BI refresh prompts for an Azure Blob storage account | Other report tables still point to storage | Expected — only `Costs` is swapped; cancel the prompt |
 | SQL endpoint: `Invalid object name 'Costs'` | Fabric lowercases Lakehouse table names at the SQL analytics endpoint | Query the lowercase name (`dbo.costs`); the shipped `ftk_FabricSql.pq` already uses lowercase |
@@ -175,13 +205,31 @@ The contract validator and library logic are unit-tested and require no Spark cl
 they run anywhere Python is available:
 
 ```bash
-python -m pytest src/pilots/fabric-onelake/notebooks/tests/test_focus_pilot.py
-python -m pytest src/pilots/fabric-onelake/validation/test_contract_validator.py
+python -m pytest src/pilots/fabric-onelake
 ```
 
-These cover the schema/type/non-null contract rules and the compaction SLA logic — the
-same checks the notebooks enforce at runtime — so a contract regression is caught without
-deploying to Fabric.
+These cover the schema/type/non-null contract rules, the column-source integrity pin, the
+restatement predicate and shrink guard, the active-file selection that keeps compaction
+metrics honest, the compaction SLA logic, and the promotion decisions — the same checks
+the notebooks enforce at runtime — so a contract regression is caught without deploying
+to Fabric.
+
+One test module needs a real Delta engine and is **skipped unless it is installed**:
+
+```bash
+pip install -r src/pilots/fabric-onelake/requirements-dev.txt
+python -m pytest src/pilots/fabric-onelake/notebooks/tests/test_restatement_spark.py
+```
+
+It proves that re-running a batch does not duplicate cost data and that restating a month
+replaces rather than accumulates. That failure mode balanced every per-hop row count, so
+only a behavioural test can catch it.
+
+Running it locally needs a JDK 17 and a Python version within PySpark's supported range,
+and on Windows also `winutils.exe` with `HADOOP_HOME` set. Rather than ask every
+contributor for that, CI runs it on every change to this folder
+(`.github/workflows/pilot-fabric-onelake.yml`) — so the module is expected to show as
+skipped locally and to actually execute in the pipeline.
 
 ## Pilot status and graduation
 
@@ -194,18 +242,27 @@ prove out. "Pilot" here means *staged with a known graduation path*, not *demo*.
 
 - Contracts, validation, the fail-loud preflight, and the unit tests are production-grade
   and run without a cluster.
-- The compaction SLA thresholds are set to **pilot-scale** values so synthetic test data
-  passes (`contracts/storage-layout.contract.json` notes the production values to restore).
-- DirectLake is gated: the readiness check returns NO-GO until real data volume is present,
-  so the SQL-endpoint path is the supported connection today.
+- The compaction SLA thresholds in the contract are the **production** values; synthetic
+  test data opts into pilot-scale thresholds per run via `sla_overrides`.
+- Direct Lake guardrails are **unset by design** — they are per-capacity-SKU and you must
+  record your own.
+- Direct Lake is gated: notebook 04 evaluates table layout only, so the SQL-endpoint path
+  is the supported connection today.
 
 **Graduation criteria — what has to be true to leave `pilots/`**
 
-1. Runs against **real billing data** for at least one full billing cycle.
-2. The **DirectLake readiness gate passes** on that real data.
-3. Compaction SLA thresholds are **restored to production values** and hold over that cycle.
+1. Runs against **real billing data** for at least one full billing cycle, including at
+   least one closed-month restatement.
+2. The **layout precondition holds** on that real data, and a **Direct Lake semantic model
+   is built and measured** — framing, cold-query latency, memory pressure, and observed
+   fallback — against the capacity SKU in use.
+3. Compaction SLA thresholds hold at production values over that cycle, with no
+   `sla_overrides` in effect.
 4. Endpoints are proven on at least the commercial and one non-commercial cloud.
-5. The component is wired into the **build/packaging system** (versioning, tests in CI).
+5. **Cost effectiveness is measured**, not assumed: Fabric CU consumption for the notebooks
+   and SQL endpoint, plus OneLake storage growth, compared against the storage and hubs+RTI
+   paths. A materialization path in a FinOps toolkit has to show its own economics.
+6. The component is wired into the **build/packaging system** (versioning, tests in CI).
 
 **Where it graduates to**
 
