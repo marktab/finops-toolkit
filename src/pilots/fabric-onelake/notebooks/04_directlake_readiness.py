@@ -4,14 +4,19 @@
 
 # MARKDOWN ********************
 
-# # 04 - DirectLake readiness gate (Decision 4)
+# # 04 - Direct Lake layout precondition (Decision 4)
 #
-# DirectLake silently falls back to DirectQuery (10-50x slower, no error) when a
-# table is not in a supported state - a failure discovered by end users in
-# production. This notebook turns the go/no-go into an artifact by evaluating
-# four measurable conditions and writing the decision to a gate table. Its
-# output is the ONLY thing that authorizes a DirectLake migration; until it
-# returns go, Power BI stays on the SQL endpoint.
+# Direct Lake on SQL silently falls back to DirectQuery (10-50x slower, no
+# error) when a table is not in a supported state - a failure discovered by end
+# users in production. This notebook evaluates the four measurable TABLE-LAYOUT
+# conditions and writes the verdict to a gate table.
+#
+# It is a precondition, not a readiness verdict. It never builds or queries a
+# Direct Lake semantic model, so it cannot observe relationships, one-side
+# uniqueness, RLS/OLS and fixed identity, framing, cold-query latency, memory
+# pressure, or an actual fallback. Passing means the layout no longer
+# disqualifies Direct Lake; Power BI still stays on the SQL endpoint until the
+# model-level proof in the graduation criteria is done.
 
 # PARAMETERS CELL ********************
 
@@ -32,7 +37,7 @@ for _p in (_PILOT_ROOT / "notebooks" / "lib", _PILOT_ROOT / "validation"):
 
 from focus_pilot.readiness import (  # noqa: E402
     directlake_guardrails,
-    evaluate_directlake_readiness,
+    evaluate_directlake_layout_precondition,
 )
 from focus_pilot.schema_bridge import find_unsupported_directlake_types  # noqa: E402
 from contract_validator import validate_compaction_sla, ContractViolation  # noqa: E402
@@ -69,7 +74,9 @@ if latest:
 observed = {field.name: field.dataType.simpleString() for field in spark.table(table_name).schema}
 unsupported = find_unsupported_directlake_types(observed)
 
-# Conditions 3 & 4: volume guardrails and average file size.
+# Conditions 3 & 4: volume guardrails and average file size. numFiles and
+# sizeInBytes come from the Delta log, so they describe the active snapshot
+# rather than files OPTIMIZE has superseded but not yet vacuumed.
 detail = spark.sql(f"DESCRIBE DETAIL {table_name}").collect()[0]
 row_count = spark.table(table_name).count()
 file_count = detail["numFiles"]
@@ -78,7 +85,7 @@ avg_file_size_mb = round((size_bytes / file_count) / (1024 * 1024), 3) if file_c
 
 # CELL ********************
 
-result = evaluate_directlake_readiness(
+result = evaluate_directlake_layout_precondition(
     compaction_healthy=compaction_healthy,
     unsupported_type_columns=unsupported,
     row_count=row_count,
@@ -92,7 +99,7 @@ result = evaluate_directlake_readiness(
 decision_ts = datetime.now(timezone.utc)
 gate_row = {
     "tableName": table_name,
-    "isReady": result.is_ready,
+    "meetsLayoutPrecondition": result.meets_precondition,
     "checks": json.dumps(result.checks),
     "reasons": json.dumps(result.reasons),
     "evaluatedAtUtc": decision_ts.isoformat(),
@@ -101,12 +108,15 @@ spark.createDataFrame([gate_row]).write.format("delta").mode("append").saveAsTab
 
 # CELL ********************
 
-if result.is_ready:
-    print("GO: table is DirectLake-ready. A DirectLake migration is authorized.")
+if result.meets_precondition:
+    print(
+        "PASS: table layout no longer disqualifies Direct Lake. This clears the "
+        "layout precondition only - build and measure a semantic model before migrating."
+    )
 else:
-    print("NO-GO: stay on the SQL endpoint. Reasons:")
+    print("BLOCKED: stay on the SQL endpoint. Reasons:")
     for reason in result.reasons:
         print(f"  - {reason}")
 
 # Expose the decision as the notebook's exit value for the orchestrator.
-mssparkutils.notebook.exit(json.dumps(result.as_dict()))  # noqa: F821
+notebookutils.notebook.exit(json.dumps(result.as_dict()))  # noqa: F821

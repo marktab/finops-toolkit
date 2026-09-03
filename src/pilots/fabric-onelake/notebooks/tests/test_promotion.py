@@ -26,7 +26,7 @@ def _gate_history(days: int, ready_flags=None):
         ready = True if ready_flags is None else ready_flags[i]
         rows.append(
             {
-                "isReady": ready,
+                "meetsLayoutPrecondition": ready,
                 "evaluatedAtUtc": (_BASE + timedelta(days=i)).isoformat(),
             }
         )
@@ -48,7 +48,6 @@ def test_promotion_blocked_when_window_too_short() -> None:
     decision = evaluate_directlake_promotion(rows, cycle_days=28, min_consecutive_ready_days=7)
     assert decision.authorized is False
     assert any("billing cycle" in r for r in decision.reasons)
-
 
 def test_promotion_blocked_on_recent_regression() -> None:
     flags = [True] * 30
@@ -75,11 +74,11 @@ def test_promotion_empty_history() -> None:
 
 
 def test_promotion_latest_per_day_wins() -> None:
-    # Two evaluations on the same final day: a later ready one supersedes an earlier no-go.
+    # Two evaluations on the same final day: a later passing one supersedes an earlier block.
     rows = _gate_history(30)
     last_day = _BASE + timedelta(days=29)
-    rows.append({"isReady": False, "evaluatedAtUtc": last_day.replace(hour=1).isoformat()})
-    rows.append({"isReady": True, "evaluatedAtUtc": last_day.replace(hour=23).isoformat()})
+    rows.append({"meetsLayoutPrecondition": False, "evaluatedAtUtc": last_day.replace(hour=1).isoformat()})
+    rows.append({"meetsLayoutPrecondition": True, "evaluatedAtUtc": last_day.replace(hour=23).isoformat()})
     decision = evaluate_directlake_promotion(rows, cycle_days=28, min_consecutive_ready_days=7)
     assert decision.authorized is True
 
@@ -88,23 +87,28 @@ def test_promotion_latest_per_day_wins() -> None:
 
 
 def test_zorder_matches_provisional() -> None:
-    counts = {"BillingAccountId": 100, "SubscriptionId": 80, "ServiceName": 10}
-    rec = recommend_zorder(counts, ["BillingAccountId", "SubscriptionId"])
+    counts = {"BillingAccountId": 100, "SubAccountId": 80, "ServiceName": 10}
+    rec = recommend_zorder(counts, ["BillingAccountId", "SubAccountId"])
+    assert rec.status == "validated"
     assert rec.matches_current is True
-    assert set(rec.recommended) == {"BillingAccountId", "SubscriptionId"}
+    assert set(rec.recommended) == {"BillingAccountId", "SubAccountId"}
 
 
 def test_zorder_recommends_revision() -> None:
     counts = {"ResourceId": 200, "ServiceName": 150, "BillingAccountId": 5}
-    rec = recommend_zorder(counts, ["BillingAccountId", "SubscriptionId"])
+    rec = recommend_zorder(counts, ["BillingAccountId", "SubAccountId"])
+    assert rec.status == "revise"
     assert rec.matches_current is False
     assert rec.recommended == ["ResourceId", "ServiceName"]
 
 
-def test_zorder_no_telemetry_keeps_provisional() -> None:
-    rec = recommend_zorder({}, ["BillingAccountId", "SubscriptionId"])
-    assert rec.matches_current is True
-    assert rec.recommended == ["BillingAccountId", "SubscriptionId"]
+def test_zorder_without_telemetry_is_unvalidated_not_a_match() -> None:
+    # Absent evidence is not confirming evidence. Reporting a match here would let
+    # the provisional Z-order be locked in on the strength of a missing table.
+    rec = recommend_zorder({}, ["BillingAccountId", "SubAccountId"])
+    assert rec.status == "unvalidated"
+    assert rec.matches_current is None
+    assert rec.recommended == ["BillingAccountId", "SubAccountId"]
 
 
 def _run_all() -> None:

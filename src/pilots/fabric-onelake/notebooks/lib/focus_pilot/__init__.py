@@ -8,14 +8,29 @@ by tested code that fails loudly, never asserted only in documentation.
 
 from __future__ import annotations
 
-from .metrics import FileMetrics, compute_file_metrics
+from .metrics import (
+    ActiveFileMismatch,
+    FileMetrics,
+    compute_file_metrics,
+    select_active_file_sizes,
+)
 from .promotion import (
     PromotionDecision,
     ZorderRecommendation,
     evaluate_directlake_promotion,
     recommend_zorder,
 )
-from .readiness import ReadinessResult, evaluate_directlake_readiness
+from .readiness import (
+    GuardrailsNotConfigured,
+    LayoutPreconditionResult,
+    directlake_guardrails,
+    evaluate_directlake_layout_precondition,
+)
+from .restatement import (
+    ImplausibleRestatement,
+    charge_month_predicate,
+    check_restatement_ratio,
+)
 from .schema_bridge import (
     SPARK_TO_LOGICAL,
     logical_type_for_spark_type,
@@ -23,14 +38,21 @@ from .schema_bridge import (
 )
 
 __all__ = [
+    "ActiveFileMismatch",
     "FileMetrics",
     "compute_file_metrics",
+    "select_active_file_sizes",
     "PromotionDecision",
     "ZorderRecommendation",
     "evaluate_directlake_promotion",
     "recommend_zorder",
-    "ReadinessResult",
-    "evaluate_directlake_readiness",
+    "GuardrailsNotConfigured",
+    "LayoutPreconditionResult",
+    "directlake_guardrails",
+    "evaluate_directlake_layout_precondition",
+    "ImplausibleRestatement",
+    "charge_month_predicate",
+    "check_restatement_ratio",
     "SPARK_TO_LOGICAL",
     "logical_type_for_spark_type",
     "spark_schema_to_logical",

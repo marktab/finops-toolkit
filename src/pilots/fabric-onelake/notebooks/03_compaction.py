@@ -18,6 +18,12 @@
 table_name = "Costs"
 metrics_table = "_pilot_compaction_metrics"
 
+# Pilot-scale SLA relaxations for synthetic data that cannot reach the contract's
+# production file-size floor. Production is the DEFAULT: leave this empty for real
+# billing data. Example for a tiny test dataset:
+#   sla_overrides = {"minAvgFileSizeMB": 0.01, "maxSmallFileFraction": 1.0, "smallFileThresholdMB": 0.01}
+sla_overrides = {}
+
 # CELL ********************
 
 import json
@@ -29,7 +35,7 @@ _PILOT_ROOT = Path("/lakehouse/default/Files")
 for _p in (_PILOT_ROOT / "notebooks" / "lib", _PILOT_ROOT / "validation"):
     sys.path.insert(0, str(_p))
 
-from focus_pilot.metrics import compute_file_metrics  # noqa: E402
+from focus_pilot.metrics import compute_file_metrics, select_active_file_sizes  # noqa: E402
 from contract_validator import validate_compaction_sla  # noqa: E402
 
 _CONTRACTS = _PILOT_ROOT / "contracts"
@@ -43,29 +49,49 @@ small_file_threshold_mb = storage_contract["compaction"]["sla"]["smallFileThresh
 # CELL ********************
 
 
-def _data_file_sizes(table: str) -> list[int]:
-    """Return the size in bytes of each active parquet file in the Delta table."""
-    detail = spark.sql(f"DESCRIBE DETAIL {table}").collect()[0]
-    location = detail["location"]
-    files = (
-        spark.read.format("binaryFile")
+def _active_file_metrics(table: str):
+    """File-layout metrics over the Delta log's ACTIVE files only.
+
+    OPTIMIZE does not delete the files it supersedes - they stay on disk until
+    VACUUM. Listing the table location alone therefore counts both generations
+    and reports a freshly compacted table as fragmented, so the listing is
+    intersected with the active set the Delta log reports.
+    """
+    location = spark.sql(f"DESCRIBE DETAIL {table}").collect()[0]["location"]
+    listed = [
+        (row["path"], row["length"])
+        for row in spark.read.format("binaryFile")
         .load(f"{location}/**/*.parquet")
         .select("path", "length")
         .collect()
+    ]
+    active = spark.table(table).inputFiles()
+    return compute_file_metrics(
+        select_active_file_sizes(listed, active), small_file_threshold_mb
     )
-    return [row["length"] for row in files]
+
+
+def _bytes_rewritten(optimize_rows) -> int | None:
+    """Bytes OPTIMIZE actually wrote, from the operation's own metrics."""
+    try:
+        return int(optimize_rows[0]["metrics"]["filesAdded"]["totalSize"])
+    except (IndexError, KeyError, TypeError, ValueError):
+        return None
 
 
 # CELL ********************
 
-before = compute_file_metrics(_data_file_sizes(table_name), small_file_threshold_mb)
+before = _active_file_metrics(table_name)
 
 # Compact. Z-order columns are provisional until validated against real query
 # patterns (Phase 6); re-running with different columns is non-destructive.
 zorder_clause = ", ".join(zorder_cols)
-spark.sql(f"OPTIMIZE {table_name} ZORDER BY ({zorder_clause})")
+optimize_result = spark.sql(f"OPTIMIZE {table_name} ZORDER BY ({zorder_clause})").collect()
 
-after = compute_file_metrics(_data_file_sizes(table_name), small_file_threshold_mb)
+after = _active_file_metrics(table_name)
+bytes_rewritten = _bytes_rewritten(optimize_result)
+if bytes_rewritten is None:
+    print("WARN: OPTIMIZE returned no recognizable filesAdded metrics; bytesRewritten recorded as null.")
 
 # CELL ********************
 
@@ -77,7 +103,7 @@ metrics_row = {
     "avgFileSizeMBBefore": before.avg_file_size_mb,
     "avgFileSizeMBAfter": after.avg_file_size_mb,
     "smallFileFractionAfter": after.small_file_fraction,
-    "bytesRewritten": after.total_bytes,
+    "bytesRewritten": bytes_rewritten,
     "lastRunTimestampUtc": run_ts.isoformat(),
     "lastRunStatus": "success",
 }
@@ -89,19 +115,14 @@ print(f"Compaction metrics: {metrics_row}")
 # CELL ********************
 
 # Enforce the D2 compaction SLA. A stale or fragmented table fails here so it
-# pages someone instead of silently degrading queries and the DirectLake gate.
-# The contract carries PRODUCTION thresholds. A small pilot/test dataset cannot
-# reach the 64MB production floor, so pass pilot-scale overrides here to keep the
-# gate meaningful on synthetic data. Remove `sla_overrides` (or set it to None)
-# for real billing data so the contract's production thresholds apply.
-pilot_sla_overrides = {
-    "minAvgFileSizeMB": 0.01,
-    "maxSmallFileFraction": 1.0,
-    "smallFileThresholdMB": 0.01,
-}
+# pages someone instead of silently degrading queries and the layout gate.
+# The contract's PRODUCTION thresholds apply unless sla_overrides is set in the
+# parameters cell (pilot-scale synthetic data only).
 result = validate_compaction_sla(
-    metrics_row, str(_STORAGE_CONTRACT), now=run_ts, sla_overrides=pilot_sla_overrides
+    metrics_row, str(_STORAGE_CONTRACT), now=run_ts, sla_overrides=sla_overrides or None
 )
+if sla_overrides:
+    print(f"WARN: pilot-scale SLA overrides in effect: {sla_overrides}")
 for warning in result.warnings:
     print(f"WARN: {warning}")
 

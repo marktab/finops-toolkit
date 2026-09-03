@@ -73,7 +73,7 @@ promotion_row = {
     "consecutiveReadyDays": decision.consecutive_ready_days,
     "reasons": json.dumps(decision.reasons),
     "zorderRecommended": json.dumps(zorder.recommended),
-    "zorderMatchesCurrent": zorder.matches_current,
+    "zorderStatus": zorder.status,
     "zorderReasons": json.dumps(zorder.reasons),
     "evaluatedAtUtc": decision_ts.isoformat(),
 }
@@ -81,14 +81,20 @@ spark.createDataFrame([promotion_row]).write.format("delta").mode("append").save
 
 # CELL ********************
 
-print("DirectLake promotion:", "AUTHORIZED" if decision.authorized else "NOT AUTHORIZED")
+print("Layout history:", "CLEARED" if decision.authorized else "NOT CLEARED")
 for reason in decision.reasons:
     print(f"  - {reason}")
 
-print("\nZ-order validation:")
+print(f"\nZ-order validation: {zorder.status.upper()}")
 for reason in zorder.reasons:
     print(f"  - {reason}")
-if not zorder.matches_current:
+if zorder.status == "revise":
     print(f"  Action: update storage-layout.contract.json zorder.columns to {zorder.recommended} and re-run OPTIMIZE.")
 
-mssparkutils.notebook.exit(json.dumps({"promotion": decision.as_dict(), "zorder": zorder.as_dict()}))  # noqa: F821
+if decision.authorized:
+    print(
+        "\nNOTE: this clears the LAYOUT history only. Build a Direct Lake semantic "
+        "model and measure it (framing, cold-query latency, memory, fallback) before migrating."
+    )
+
+notebookutils.notebook.exit(json.dumps({"promotion": decision.as_dict(), "zorder": zorder.as_dict()}))  # noqa: F821

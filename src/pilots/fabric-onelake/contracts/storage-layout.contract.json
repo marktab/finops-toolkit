@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "contractId": "fabric-onelake.storage-layout",
-  "contractVersion": "1.0.0",
+  "contractVersion": "2.0.0",
   "title": "D2 — physical storage contract (Delta in OneLake)",
-  "description": "Machine-readable contract for how FOCUS cost data is physically materialized in OneLake. Defines the managed Delta table, physical types, partitioning, Z-order, and the compaction service-level expectation. The compaction-with-metrics notebook and the DirectLake-readiness gate both load this file and FAIL LOUDLY when reality drifts from it. Do NOT assert these targets in documentation only — this file is the spec.",
+  "description": "Machine-readable contract for how FOCUS cost data is physically materialized in OneLake. Defines the managed Delta table, physical types, write/restatement semantics, partitioning, Z-order, and the compaction service-level expectation. The Delta write, the compaction-with-metrics notebook, and the Direct Lake layout precondition all load this file and FAIL LOUDLY when reality drifts from it. Do NOT assert these targets in documentation only — this file is the spec. Version 2.0.0 changed the write from append to month-scoped replace; see writeMode.",
 
   "storageMode": {
     "type": "managedDelta",
@@ -37,6 +37,33 @@
     }
   },
 
+  "writeMode": {
+    "description": "Each batch is treated as a FULL SNAPSHOT of every charge month it covers, and the write REPLACES those months atomically (Delta replaceWhere on the partition column) rather than appending. Cost Management restates: the open month is re-exported every day, and closed months receive later credit and amortization corrections. An append-only write multiplies BilledCost from the second run onward while every per-hop row-conservation check still balances, because each hop faithfully conserves whatever it was handed — the duplication is invisible to per-hop accounting. Replace is also idempotent on retry, so it covers the orchestration-retry case without a separate transaction identifier.",
+    "mode": "replaceMonths",
+    "replaceKey": "x_ChargeMonth",
+    "minRestatementRowRatio": 0.5,
+    "minRestatementRowRatioNote": "A restatement that writes less than this fraction of the rows it removed is rejected. replaceWhere cannot tell a genuine correction from a truncated source export, and a truncated export would silently delete good months. A month's row count effectively never halves between exports, so this floor is conservative. Set to null at the call site for an intentional historical re-scope.",
+    "rejected": {
+      "append": "Duplicates every restated month; the failure is silent because per-hop counts still balance.",
+      "mergeOnNaturalKey": "Azure FOCUS has no reliable natural key. A synthesized hash key would have to be PROVEN unique against real exports before it could be trusted, and is more expensive at scale than replacing whole months. Revisit only if batches ever become partial within a month."
+    }
+  },
+
+  "ingestionLedger": {
+    "description": "Append-only record of every restatement, so a destructive replace is auditable after the fact rather than inferred from Delta history. One row per write.",
+    "table": "_pilot_ingestion_metrics",
+    "emit": [
+      "ingestionId",
+      "tableName",
+      "chargeMonths",
+      "rowsRemoved",
+      "rowsWritten",
+      "deltaVersion",
+      "writeMode",
+      "committedAtUtc"
+    ]
+  },
+
   "partitioning": {
     "description": "Partition by charge period month. Aligns with the dominant time-range filter in cost reporting and keeps partition counts bounded.",
     "columns": ["x_ChargeMonth"],
@@ -66,7 +93,7 @@
       "note": "26h tolerance allows one missed daily window before alerting. Breaching any threshold must raise an alert (Data Activator / monitoring), not silently degrade queries. These are PRODUCTION thresholds; a small pilot/test dataset that cannot reach the 64MB floor should pass pilot-scale sla_overrides to validate_compaction_sla at the call site (see 03_compaction) rather than lowering these values."
     },
     "metrics": {
-      "description": "Emitted on every run to a location an alert can watch. These are the inputs to both the SLA check and the DirectLake-readiness gate.",
+      "description": "Emitted on every run to a location an alert can watch. These are the inputs to both the SLA check and the Direct Lake layout precondition. File counts and sizes MUST be measured over the Delta log's ACTIVE file set: OPTIMIZE does not delete the files it supersedes, so a plain listing of the table location counts both generations and reports a freshly compacted table as fragmented.",
       "emit": [
         "fileCountBefore",
         "fileCountAfter",
@@ -77,6 +104,7 @@
         "lastRunTimestampUtc",
         "lastRunStatus"
       ],
+      "bytesRewrittenNote": "Bytes OPTIMIZE actually wrote, taken from the operation's own filesAdded metrics. NOT the table's total size — those differ by orders of magnitude on an incremental compaction, and reporting the latter makes a no-op run look like a full rewrite.",
       "sink": {
         "type": "deltaTable",
         "name": "_pilot_compaction_metrics",
@@ -86,17 +114,18 @@
   },
 
   "directLake": {
-    "description": "Guardrails consumed by the DirectLake-readiness gate (Decision 4). DirectLake silently falls back to DirectQuery above these limits, so they are checked, not assumed. Defaults are conservative and SKU-agnostic; raise them only when validated against the pilot capacity SKU's published DirectLake limits.",
-    "maxRows": 1500000000,
-    "maxFiles": 10000,
-    "minAvgFileSizeMB": 64,
-    "note": "minAvgFileSizeMB mirrors the compaction SLA floor so a table that passes compaction is sized appropriately for DirectLake memory-mapping."
+    "description": "Guardrails consumed by the Direct Lake layout precondition (Decision 4). Direct Lake silently falls back to DirectQuery above these limits, so they are checked, not assumed. These values are DELIBERATELY UNSET: the limits vary by Fabric capacity SKU, and a built-in default is wrong for most capacities in both directions — a permissive default produces a false pass on a small SKU, which is precisely the silent failure this gate exists to prevent. Look up the limits published for YOUR capacity SKU and record them here. The notebook fails loudly while they are null.",
+    "maxRows": null,
+    "maxFiles": null,
+    "minAvgFileSizeMB": null,
+    "note": "Set minAvgFileSizeMB to at least the compaction SLA floor so a table that passes compaction is also sized appropriately for Direct Lake memory-mapping. Re-check all three on any capacity resize.",
+    "scopeNote": "These cover table LAYOUT only. Clearing them does not establish that a Direct Lake semantic model will perform: relationships, one-side uniqueness, RLS/OLS and fixed identity, framing, cold-query latency, memory pressure, and observed fallback are all model-level and are not evaluated here."
   },
 
   "rowConservation": {
-    "description": "Every materialization hop (source->staging in ingestion, staging->Delta in the write) must neither drop nor invent rows. Real hub failures change the row count with NO error: extents silently lost during multi-file ingestion, or rows dropped when a manifest row count is null. The notebooks capture the input and output counts of each hop and hand them to validate_row_conservation, which fails loudly on any drift beyond the tolerance below so a silent loss stops the pipeline instead of corrupting cost totals downstream.",
+    "description": "The rows a materialization hop WRITES must equal the rows it READ. Real hub failures change that count with NO error: extents silently lost during multi-file ingestion, or rows dropped when a manifest row count is null. The notebooks capture the input and output counts of each hop and hand them to validate_row_conservation, which fails loudly on any drift beyond the tolerance below.",
     "maxRowCountDriftFraction": 0.0,
-    "note": "0.0 means exact conservation (input count must equal output count). This is a physical copy/append, not a transform, so no rows should be added or removed; KQL remains the single transform owner (Decision 1). Raise this only if a hop legitimately dedupes or filters, and document why."
+    "note": "0.0 means exact conservation (input count must equal output count). This governs the ROWS MOVED BY THE HOP, not the table total: a month-scoped replace legitimately removes prior rows for the months it restates, and that removal is recorded in the ingestion ledger and bounded by writeMode.minRestatementRowRatio rather than by this rule. KQL remains the single transform owner (Decision 1), so no hop should add or drop rows in transit. Raise this only if a hop legitimately dedupes or filters, and document why."
   },
 
   "batchHandoff": {
@@ -106,13 +135,15 @@
   },
 
   "enforcement": {
-    "description": "Policy applied by the compaction notebook and the readiness gate. Every rule maps to a silent-failure scenario from the decision deck.",
+    "description": "Policy applied by the Delta write, the compaction notebook, and the layout precondition. Every rule maps to a silent-failure scenario from the decision deck.",
     "failOnStaleCompaction": true,
     "failOnSmallFileFractionExceeded": true,
     "failOnAvgFileSizeBelowMin": true,
     "failOnZorderColumnMissing": true,
     "warnOnProvisionalZorderUnvalidated": true,
     "failOnRowCountDrift": true,
-    "failOnIncompleteBatch": true
+    "failOnIncompleteBatch": true,
+    "failOnImplausibleRestatement": true,
+    "failOnUnconfiguredDirectLakeGuardrails": true
   }
 }

@@ -1,15 +1,19 @@
 """DirectLake promotion decision and Z-order validation (Phase 6).
 
-After one full billing cycle on the SQL endpoint, the accumulated readiness-gate
-history - not a one-off "looks fast enough" judgment - authorizes (or withholds)
-the DirectLake migration. This module turns that into tested logic:
+After one full billing cycle on the SQL endpoint, the accumulated
+layout-precondition history - not a one-off "looks fast enough" judgment -
+clears (or withholds) the DirectLake migration. This module turns that into
+tested logic:
 
   * evaluate_directlake_promotion: aggregates the per-run gate history and only
-    authorizes DirectLake when the table has been continuously ready across a
-    sustained window that spans at least one billing cycle.
+    authorizes DirectLake when the table has continuously met the layout
+    precondition across a window spanning at least one billing cycle.
   * recommend_zorder: compares the provisional Z-order columns against the
-    pilot customer's ACTUAL dominant query filters and recommends keeping or
-    revising them (the deck's explicit Phase 6 follow-up).
+    pilot customer's ACTUAL dominant query filters and recommends keeping,
+    revising, or - absent telemetry - explicitly leaving them unvalidated.
+
+This is a layout-level authorization only. It does not exercise a Direct Lake
+semantic model, so it cannot be the sole basis for a production migration.
 """
 
 from __future__ import annotations
@@ -63,27 +67,31 @@ def evaluate_directlake_promotion(
 
     Args:
         gate_rows: Rows from the _pilot_directlake_gate table, each with
-            ``isReady`` (bool) and ``evaluatedAtUtc`` (ISO 8601 or datetime).
-            When multiple evaluations occur on one day, the latest wins.
+            ``meetsLayoutPrecondition`` (bool) and ``evaluatedAtUtc`` (ISO 8601
+            or datetime). When multiple evaluations occur on one day, the
+            latest wins.
         cycle_days: Minimum observation span in days (one billing cycle).
-        min_consecutive_ready_days: Required trailing run of ready days.
+        min_consecutive_ready_days: Required trailing run of passing days.
         now: Override for current time (testing).
 
     Returns:
-        PromotionDecision with the verdict and human-readable reasons.
+        PromotionDecision with the verdict and human-readable reasons. Note that
+        authorization here clears the *layout* history only; a Direct Lake
+        migration additionally requires the model-level proof described in the
+        pilot README.
     """
     now = now or datetime.now(timezone.utc)
     reasons: list[str] = []
 
     if not gate_rows:
-        return PromotionDecision(False, 0, 0, ["No readiness-gate history; run the gate across a billing cycle first."])
+        return PromotionDecision(False, 0, 0, ["No layout-precondition history; run the gate across a billing cycle first."])
 
     # Latest evaluation per UTC date.
     latest_by_day: dict[object, tuple[datetime, bool]] = {}
     for row in gate_rows:
         ts = _parse_iso(row["evaluatedAtUtc"])
         day = ts.date()
-        ready = bool(row["isReady"])
+        ready = bool(row["meetsLayoutPrecondition"])
         if day not in latest_by_day or ts > latest_by_day[day][0]:
             latest_by_day[day] = (ts, ready)
 
@@ -129,11 +137,18 @@ def evaluate_directlake_promotion(
 
 @dataclass
 class ZorderRecommendation:
-    """Recommended Z-order columns vs. the provisional contract value."""
+    """Recommended Z-order columns vs. the provisional contract value.
+
+    ``status`` is the authoritative field. ``matches_current`` is None when no
+    telemetry was available, because "we have no evidence" is not "the current
+    columns are correct" - recording the latter would let the provisional
+    Z-order be locked in on the strength of a missing table.
+    """
 
     recommended: list[str]
     current: list[str]
-    matches_current: bool
+    matches_current: bool | None
+    status: str
     reasons: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -141,6 +156,7 @@ class ZorderRecommendation:
             "recommended": self.recommended,
             "current": self.current,
             "matches_current": self.matches_current,
+            "status": self.status,
             "reasons": self.reasons,
         }
 
@@ -166,16 +182,22 @@ def recommend_zorder(
             small number of high-cardinality filter columns).
 
     Returns:
-        ZorderRecommendation. ``matches_current`` is True when the recommended
-        set equals the current set (order-insensitive), meaning the provisional
-        choice is validated and can be locked in.
+        ZorderRecommendation with ``status`` one of:
+          * ``"validated"``  - telemetry confirms the current columns; lock in.
+          * ``"revise"``     - telemetry disagrees with the current columns.
+          * ``"unvalidated"`` - no telemetry; the Z-order remains provisional.
     """
     if not filter_column_counts:
         return ZorderRecommendation(
             recommended=list(current_zorder),
             current=list(current_zorder),
-            matches_current=True,
-            reasons=["No query-filter telemetry; cannot validate. Keeping provisional Z-order."],
+            matches_current=None,
+            status="unvalidated",
+            reasons=[
+                "No query-filter telemetry available, so the provisional Z-order is "
+                "UNVALIDATED - not confirmed. Populate the query-filter statistics "
+                "table over a full billing cycle before locking these columns in."
+            ],
         )
 
     ranked = [col for col, _ in Counter(filter_column_counts).most_common(top_n)]
@@ -192,5 +214,6 @@ def recommend_zorder(
         recommended=ranked,
         current=list(current_zorder),
         matches_current=matches,
+        status="validated" if matches else "revise",
         reasons=reasons,
     )
