@@ -66,20 +66,24 @@ for warning in schema_result.warnings:
 # Enforce non-nullability on the contract's non-nullable columns.
 from pyspark.sql import functions as F  # noqa: E402
 
-null_counts = {
-    field.name: df.filter(F.col(field.name).isNull()).count()
-    for field in df.schema
-}
+# One aggregation covers every column. Filtering and counting per column instead
+# would scan the whole table once per FOCUS column (50+ passes) for the same answer.
+df.cache()
+source_count = df.count()
+null_counts = (
+    df.agg(*[F.sum(F.col(c).isNull().cast("long")).alias(c) for c in df.columns])
+    .collect()[0]
+    .asDict()
+)
 validate_non_null(null_counts, str(_SCHEMA_CONTRACT))
 
-print(f"Ingestion validated: {df.count()} rows, FOCUS {focus_version}, ingestion_id={ingestion_id}")
+print(f"Ingestion validated: {source_count} rows, FOCUS {focus_version}, ingestion_id={ingestion_id}")
 
 # CELL ********************
 
 # Hand the validated DataFrame to the next notebook via a temp view / path.
 # In the ADF pipeline this is chained; here we persist a validated staging copy.
 _staging = f"{oneLakeEndpoint}/Files/_staging/{ingestion_id}"
-source_count = df.count()
 df.write.mode("overwrite").parquet(_staging)
 
 # Row-count conservation (source -> staging): staging must contain exactly the

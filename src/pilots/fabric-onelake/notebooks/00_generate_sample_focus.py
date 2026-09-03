@@ -33,13 +33,18 @@ OUTPUT_PATH = "Files/sample-focus"
 # /lakehouse/default mount) is the reliable path on tenants where the local
 # mount does not resolve — notably Microsoft-internal (msit) capacities.
 #
-# The host segment differs by cloud; copy the authoritative value from your
-# Lakehouse > Properties ABFSS path and paste it here:
+# REQUIRED: copy the authoritative value from your Lakehouse > Properties ABFSS
+# path. The host segment differs by cloud:
 #   Commercial        : abfss://<ws>@onelake.dfs.fabric.microsoft.com/<lh>.Lakehouse
 #   Microsoft (msit)  : abfss://<ws>@msit-onelake.dfs.fabric.microsoft.com/<lh>.Lakehouse
 #   Sovereign clouds  : abfss://<ws>@<your-cloud-onelake-host>/<lh>.Lakehouse
-ABFSS_ROOT = "abfss://FabricFinOps@msit-onelake.dfs.fabric.microsoft.com/FinOpsLakehouse.Lakehouse"
+ABFSS_ROOT = ""
 # ---------------------------------------------------------------------------
+
+if not ABFSS_ROOT:
+    raise ValueError(
+        "Set ABFSS_ROOT to your Lakehouse ABFSS path (Lakehouse > Properties) before running."
+    )
 
 random.seed(42)
 

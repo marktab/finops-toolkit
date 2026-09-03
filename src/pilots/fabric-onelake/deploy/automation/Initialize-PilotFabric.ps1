@@ -28,11 +28,17 @@
     Optional. Fabric capacity object id to assign to a newly-created workspace.
 
     .PARAMETER AccessToken
-    Required. Bearer token for https://api.fabric.microsoft.com. Obtain via:
+    Required. Bearer token for https://api.fabric.microsoft.com. Accepts either a SecureString (what
+    Get-AzAccessToken returns by default in current Az.Accounts) or a plain string. Obtain via:
     (Get-AzAccessToken -ResourceUrl 'https://api.fabric.microsoft.com').Token
 
     .PARAMETER ParametersPath
     Optional. Path to write the resolved deployment parameters file. Default: ./deploy-parameters.generated.json.
+
+    .PARAMETER ProvisioningTimeoutSeconds
+    Optional. How long to wait for the Lakehouse SQL analytics endpoint to finish provisioning. The endpoint
+    is created asynchronously, so it is normal for it to be absent for the first few seconds after the
+    Lakehouse is created. Default: 300.
 
     .PARAMETER AzureEnvironment
     Optional. Target Azure cloud (AzureCloud, AzureUSGovernment, AzureChinaCloud), matching the
@@ -88,8 +94,13 @@ function Initialize-PilotFabric
         $CapacityId,
 
         [Parameter(Mandatory = $true)]
-        [string]
+        [object]
         $AccessToken,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(30, 3600)]
+        [int]
+        $ProvisioningTimeoutSeconds = 300,
 
         [Parameter(Mandatory = $false)]
         [string]
@@ -162,7 +173,7 @@ function Initialize-PilotFabric
     $ApiBaseUrl = $resolvedApiBaseUrl
 
     $headers = @{
-        Authorization  = "Bearer $AccessToken"
+        Authorization  = "Bearer $(ConvertTo-PilotPlainToken -Token $AccessToken)"
         'Content-Type' = 'application/json'
     }
 
@@ -221,18 +232,22 @@ function Initialize-PilotFabric
     # sovereign clouds supply their own host. Only the host varies; the shape is identical.
     $oneLakeEndpoint = "abfss://$WorkspaceName@$resolvedOneLakeHost/$LakehouseName.Lakehouse"
 
-    # SQL endpoint comes from the Lakehouse properties (may take a moment to provision).
-    # We read it back from the API rather than constructing it, so it is automatically
-    # correct for the current cloud (commercial, msit, or sovereign) with no extra config.
+    # SQL endpoint comes from the Lakehouse properties. It is provisioned asynchronously,
+    # so a newly-created Lakehouse reports no endpoint for the first few seconds. We read it
+    # back from the API rather than constructing it, so it is automatically correct for the
+    # current cloud (commercial, msit, or sovereign) with no extra config.
     $sqlEndpoint = $lakehouse.properties.sqlEndpointProperties.connectionString
-    if (-not $sqlEndpoint)
+    $deadline = (Get-Date).AddSeconds($ProvisioningTimeoutSeconds)
+    while (-not $sqlEndpoint -and (Get-Date) -lt $deadline)
     {
+        Write-Verbose "SQL analytics endpoint not provisioned yet; retrying in 10s."
+        Start-Sleep -Seconds 10
         $detail = Invoke-RestMethod -Method Get -Uri "$ApiBaseUrl/workspaces/$workspaceId/lakehouses/$($lakehouse.id)" -Headers $headers
         $sqlEndpoint = $detail.properties.sqlEndpointProperties.connectionString
     }
     if (-not $sqlEndpoint)
     {
-        throw "SQL analytics endpoint is not yet available for Lakehouse '$LakehouseName'. Re-run after provisioning completes."
+        throw "SQL analytics endpoint for Lakehouse '$LakehouseName' did not provision within $ProvisioningTimeoutSeconds seconds. Re-run this command; it is idempotent and will reuse the existing workspace and Lakehouse."
     }
 
     # --- Write parameters file ---------------------------------------------------
@@ -254,6 +269,52 @@ function Initialize-PilotFabric
     # --- Validate via the same fail-loud preflight the manual path uses ---------
     . (Join-Path -Path $PSScriptRoot -ChildPath '..' -AdditionalChildPath @('manual', 'Test-PilotDeployment.ps1'))
     return Test-PilotDeployment -ParametersPath $ParametersPath
+}
+
+<#
+    .SYNOPSIS
+    Normalizes an access token supplied as either a SecureString or a plain string.
+
+    .DESCRIPTION
+    ConvertTo-PilotPlainToken accepts what current Az.Accounts returns from Get-AzAccessToken (a SecureString)
+    as well as a plain string, and returns the bearer value. It also catches the common mistake of a
+    SecureString that was stringified before being passed in, which would otherwise send the literal text
+    "System.Security.SecureString" as the bearer token and fail with an opaque 401.
+
+    .PARAMETER Token
+    Required. The token as a SecureString or String.
+#>
+function ConvertTo-PilotPlainToken
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [object]
+        $Token
+    )
+
+    $plain = if ($Token -is [System.Security.SecureString])
+    {
+        [System.Net.NetworkCredential]::new('', $Token).Password
+    }
+    else
+    {
+        [string]$Token
+    }
+
+    if ([string]::IsNullOrWhiteSpace($plain))
+    {
+        throw 'AccessToken is empty.'
+    }
+
+    if ($plain -eq 'System.Security.SecureString')
+    {
+        throw "AccessToken was stringified from a SecureString. Pass the SecureString itself, or use (Get-AzAccessToken -ResourceUrl 'https://api.fabric.microsoft.com' -AsPlainText)."
+    }
+
+    return $plain
 }
 
 <#
