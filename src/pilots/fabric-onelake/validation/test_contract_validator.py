@@ -6,6 +6,8 @@ or:  python src/pilots/fabric-onelake/validation/test_contract_validator.py
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -162,6 +164,35 @@ def test_batch_completeness_fails_on_excess_read() -> None:
 
 def test_batch_completeness_fails_on_negative_count() -> None:
     _expect(True, lambda: validate_batch_completeness(-1, 0, STORAGE))
+
+
+# --- column source integrity ------------------------------------------------ #
+
+
+def test_pinned_hash_matches_the_column_source() -> None:
+    # An unpinned or stale hash makes the integrity guard inert, which is how the
+    # one check against upstream FOCUS drift silently stops working.
+    contract = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    expected = contract["columnSource"]["integrity"]["expected"]
+    assert expected, "Column-source integrity hash is not pinned."
+    source = (SCHEMA.parent / contract["columnSource"]["path"]).resolve()
+    actual = hashlib.sha256(source.read_bytes()).hexdigest()
+    assert actual == expected, f"Pinned hash {expected} does not match {source.name} ({actual})."
+
+
+def test_column_source_is_a_verbatim_copy_of_open_data() -> None:
+    # The contract references open-data as the single source of truth. The copy
+    # beside the contract exists only so notebooks can load it from Lakehouse
+    # Files; if it drifts, the pilot validates against a schema the toolkit no
+    # longer produces.
+    contract = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    local = (SCHEMA.parent / contract["columnSource"]["path"]).resolve()
+    upstream = Path(__file__).resolve().parents[4] / contract["columnSource"]["upstreamPath"]
+    assert upstream.exists(), f"Upstream column source not found: {upstream}"
+    assert local.read_bytes() == upstream.read_bytes(), (
+        f"{local.name} has drifted from {contract['columnSource']['upstreamPath']}. "
+        "Re-copy from open-data and re-pin the integrity hash."
+    )
 
 
 def _run_all() -> None:

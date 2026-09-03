@@ -14,14 +14,15 @@
 
   "columnSource": {
     "type": "reference",
-    "description": "Canonical column + FOCUS-type definitions are owned by the toolkit open-data metadata. The pilot reuses that file as the source of truth instead of copying columns (copying would create the exact drift this decision avoids).",
+    "description": "Canonical column + FOCUS-type definitions are owned by the toolkit open-data metadata. The pilot reuses that file as the source of truth instead of copying columns (copying would create the exact drift this decision avoids). The file alongside this contract is a verbatim copy of the upstream file, present only so the notebooks can load it from the Lakehouse Files area where the open-data tree is not available; it is never edited by hand and a unit test asserts it is byte-identical to upstream.",
     "path": "./FocusCost_1.2-preview.json",
+    "upstreamPath": "src/open-data/dataset-metadata/FocusCost_1.2-preview.json",
     "columnNameField": "ColumnName",
     "dataTypeField": "DataType",
     "integrity": {
       "method": "sha256",
-      "expected": "",
-      "note": "Populate with the SHA-256 of the referenced file at pin time. A mismatch means the upstream schema source changed and the contract must be re-reviewed before the pilot consumes it."
+      "expected": "24b20dee864b3afb823ebcccbd74b524af33a80a9bfb9531c7dbf11d42f651c3",
+      "note": "SHA-256 of the referenced file at pin time. A mismatch means the upstream schema source changed and the contract must be re-reviewed before the pilot consumes it. Re-pin deliberately, as part of a FOCUS version review \u2014 never to make a failing run pass."
     }
   },
 
