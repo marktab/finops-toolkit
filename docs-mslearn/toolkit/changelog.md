@@ -3,7 +3,7 @@ title: FinOps toolkit changelog
 description: Review the latest features and enhancements in the FinOps toolkit, including updates to FinOps hubs, Power BI reports, and more.
 author: MSBrett
 ms.author: brettwil
-ms.date: 09/02/2026
+ms.date: 09/03/2026
 ms.topic: reference
 ms.service: finops
 ms.subservice: finops-toolkit
@@ -18,12 +18,16 @@ ms.reviewer: brettwil
 
 This article summarizes the features and enhancements in each release of the FinOps toolkit.
 
-<!--
 <br>
 
 ## Unreleased
 
 The following section lists features and enhancements that are currently in development.
+
+### FinOps Fabric / OneLake pilot
+
+- **Added**
+  - Added an optional Microsoft Fabric / OneLake pilot under `src/pilots/fabric-onelake` that materializes FOCUS cost data as a managed Delta table, enforces machine-readable schema and storage-layout contracts in code, runs compaction with monitored SLA metrics, gates Direct Lake behind a table-layout precondition, and swaps the Power BI `Costs` source to the Lakehouse SQL analytics endpoint. Each batch is treated as a full snapshot of the charge months it covers and those months are replaced atomically, so re-running a batch or ingesting a restated month does not duplicate cost data. Includes manual and REST-based deployment paths with a fail-loud preflight and environment-aware endpoints for commercial and Microsoft-internal tenants.
 
 ### [FinOps hubs](hubs/finops-hubs-overview.md)
 
@@ -83,8 +87,6 @@ The following section lists features and enhancements that are currently in deve
   - Fixed the commitment discount eligibility dataset refresh so it is reproducible and complete; retired meters now age out and previously missed meters are included ([#2164](https://github.com/microsoft/finops-toolkit/pull/2164)).
   - Fixed the weekly commitment discount eligibility refresh timing out before it could publish, which left the dataset unchanged since it first shipped in v14. The refresh now walks each price type directly instead of sharding by service family, and verifies completeness by comparing two independent traversals before writing ([#2251](https://github.com/microsoft/finops-toolkit/pull/2251)).
   - Fixed `x_CommitmentDiscountSpendEligibility` and `x_CommitmentDiscountUsageEligibility` carrying each other's values. FOCUS classifies a reservation as a usage commitment (committed to a quantity of usage) and a savings plan as a spend commitment (committed to an amount of money), so the spend column now reports savings plan pricing and the usage column reports reservation pricing. The dataset shipped with the two reversed from v14 ([#2279](https://github.com/microsoft/finops-toolkit/issues/2279)).
-
--->
 
 <br><a name="latest"></a>
 

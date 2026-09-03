@@ -1,0 +1,370 @@
+﻿# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+<#
+    .SYNOPSIS
+    Provisions the Microsoft Fabric workspace and Lakehouse for the FinOps OneLake pilot via the Fabric REST API.
+
+    .DESCRIPTION
+    Initialize-PilotFabric is the OPTIONAL automation layer that sits on top of the proven manual deployment
+    path (Decision 3). It is built only after the manual path works end-to-end, so it is a convenience over a
+    known-good path rather than a single point of failure.
+
+    The command is idempotent and re-runnable: it gets-or-creates the workspace and Lakehouse (never duplicating
+    an existing one), resolves the OneLake and SQL endpoints, writes the deployment parameters file, and then
+    runs the same fail-loud preflight (Test-PilotDeployment) the manual path uses. Every create is gated behind
+    ShouldProcess so -WhatIf shows exactly what would change.
+
+    Authentication uses the caller's current context. Supply an access token for the Fabric API
+    (https://api.fabric.microsoft.com) via -AccessToken, or pipe one from Get-AzAccessToken.
+
+    .PARAMETER WorkspaceName
+    Required. Display name of the Fabric workspace to get-or-create.
+
+    .PARAMETER LakehouseName
+    Required. Name of the Lakehouse to get-or-create in the workspace.
+
+    .PARAMETER CapacityId
+    Optional. Fabric capacity object id to assign to a newly-created workspace.
+
+    .PARAMETER AccessToken
+    Required. Bearer token for https://api.fabric.microsoft.com. Accepts either a SecureString (what
+    Get-AzAccessToken returns by default in current Az.Accounts) or a plain string. Obtain via:
+    (Get-AzAccessToken -ResourceUrl 'https://api.fabric.microsoft.com').Token
+
+    .PARAMETER ParametersPath
+    Optional. Path to write the resolved deployment parameters file. Default: ./deploy-parameters.generated.json.
+
+    .PARAMETER ProvisioningTimeoutSeconds
+    Optional. How long to wait for the Lakehouse SQL analytics endpoint to finish provisioning. The endpoint
+    is created asynchronously, so it is normal for it to be absent for the first few seconds after the
+    Lakehouse is created. Default: 300.
+
+    .PARAMETER AzureEnvironment
+    Optional. Target Azure cloud (AzureCloud, AzureUSGovernment, AzureChinaCloud), matching the
+    -AzureEnvironment convention used elsewhere in the toolkit. Drives the OneLake DFS host and
+    Fabric API base via lookup maps. Default: AzureCloud. Sovereign entries are placeholders until
+    Fabric publishes those endpoints; use -OneLakeHost / -ApiBaseUrl to supply them explicitly.
+
+    .PARAMETER ApiBaseUrl
+    Optional. Explicit override for the Fabric REST API base URL. Empty resolves from -AzureEnvironment
+    (AzureCloud default: https://api.fabric.microsoft.com/v1). Required for sovereign clouds.
+
+    .PARAMETER OneLakeHost
+    Optional. Explicit override for the OneLake DFS host used to build the ABFSS endpoint. Empty
+    resolves from -AzureEnvironment. Supply directly for Microsoft-internal (msit-onelake.dfs.fabric.microsoft.com)
+    or sovereign clouds (copy from the Lakehouse > Properties ABFSS path).
+
+    .EXAMPLE
+    $token = (Get-AzAccessToken -ResourceUrl 'https://api.fabric.microsoft.com').Token
+    Initialize-PilotFabric -WorkspaceName 'FinOps Pilot' -LakehouseName 'FinOpsHub' -CapacityId $cap -AccessToken $token
+
+    Gets-or-creates the workspace and Lakehouse, then writes and validates the parameters file.
+
+    .EXAMPLE
+    Initialize-PilotFabric -WorkspaceName 'FinOps Pilot' -LakehouseName 'FinOpsHub' -AccessToken $token -WhatIf
+
+    Shows what would be created without making changes.
+
+    .EXAMPLE
+    Initialize-PilotFabric -WorkspaceName 'FinOps Pilot' -LakehouseName 'FinOpsHub' -AccessToken $token `
+        -OneLakeHost 'msit-onelake.dfs.fabric.microsoft.com'
+
+    Targets a Microsoft-internal (msit) tenant by supplying the OneLake host explicitly.
+
+    .OUTPUTS
+    System.Collections.Hashtable. The resolved, validated deployment parameters.
+#>
+function Initialize-PilotFabric
+{
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+    [OutputType([hashtable])]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $WorkspaceName,
+
+        [Parameter(Mandatory = $true)]
+        [string]
+        $LakehouseName,
+
+        [Parameter(Mandatory = $false)]
+        [string]
+        $CapacityId,
+
+        [Parameter(Mandatory = $true)]
+        [object]
+        $AccessToken,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(30, 3600)]
+        [int]
+        $ProvisioningTimeoutSeconds = 300,
+
+        [Parameter(Mandatory = $false)]
+        [string]
+        $ParametersPath = (Join-Path -Path $PSScriptRoot -ChildPath 'deploy-parameters.generated.json'),
+
+        # Target Azure cloud, using the same names as the rest of the toolkit
+        # (for example the optimization engine's -AzureEnvironment). Drives the
+        # OneLake DFS host and Fabric API base via the lookup maps below. Defaults
+        # to the public commercial cloud.
+        #
+        # NOTE: Microsoft Fabric is generally available in AzureCloud today; its
+        # availability and endpoint hosts in sovereign clouds (AzureUSGovernment,
+        # AzureChinaCloud) are still emerging. Those entries are PLACEHOLDERS: when
+        # you target a sovereign cloud you must supply -OneLakeHost (and usually
+        # -ApiBaseUrl) explicitly until the sovereign Fabric endpoints are published.
+        [Parameter(Mandatory = $false)]
+        [ValidateSet('AzureCloud', 'AzureUSGovernment', 'AzureChinaCloud')]
+        [string]
+        $AzureEnvironment = 'AzureCloud',
+
+        # Explicit override for the Fabric REST API base URL. Leave empty to resolve
+        # it from -AzureEnvironment. Required for sovereign clouds (placeholder maps).
+        [Parameter(Mandatory = $false)]
+        [string]
+        $ApiBaseUrl = '',
+
+        # Explicit override for the OneLake DFS host used to build the ABFSS endpoint.
+        # Leave empty to resolve it from -AzureEnvironment. Supply this directly for:
+        #   Microsoft internal (msit) : msit-onelake.dfs.fabric.microsoft.com
+        #                               (msit is not a distinct AzureEnvironment value)
+        #   Sovereign clouds          : the OneLake DFS host for your cloud, copied from
+        #                               the Lakehouse > Properties ABFSS path (authoritative).
+        # The SQL endpoint is NOT built here: it is read back from the Fabric API
+        # response below, so it is always correct for whatever cloud you are in.
+        [Parameter(Mandatory = $false)]
+        [string]
+        $OneLakeHost = ''
+    )
+
+    # --- Resolve cloud endpoints (toolkit -AzureEnvironment convention) ----------
+    # Mirrors the Bicep lookup-map pattern (see Analytics/app.bicep dataExplorerDnsSuffixLookup):
+    # a map keyed by the cloud name, with an explicit override taking precedence. Sovereign
+    # entries are intentionally empty PLACEHOLDERS until Fabric publishes those endpoints;
+    # supplying -OneLakeHost / -ApiBaseUrl overrides them.
+    $oneLakeHostLookup = @{
+        AzureCloud        = 'onelake.dfs.fabric.microsoft.com'
+        AzureUSGovernment = ''   # placeholder: supply -OneLakeHost until sovereign Fabric endpoints are published
+        AzureChinaCloud   = ''   # placeholder: supply -OneLakeHost until sovereign Fabric endpoints are published
+    }
+    $apiBaseUrlLookup = @{
+        AzureCloud        = 'https://api.fabric.microsoft.com/v1'
+        AzureUSGovernment = ''   # placeholder: supply -ApiBaseUrl until sovereign Fabric endpoints are published
+        AzureChinaCloud   = ''   # placeholder: supply -ApiBaseUrl until sovereign Fabric endpoints are published
+    }
+
+    $resolvedOneLakeHost = if ($OneLakeHost) { $OneLakeHost } else { $oneLakeHostLookup[$AzureEnvironment] }
+    $resolvedApiBaseUrl = if ($ApiBaseUrl) { $ApiBaseUrl } else { $apiBaseUrlLookup[$AzureEnvironment] }
+
+    if ([string]::IsNullOrWhiteSpace($resolvedOneLakeHost))
+    {
+        throw "No OneLake DFS host is defined for '$AzureEnvironment'. Microsoft Fabric endpoints for this cloud are not yet published; pass -OneLakeHost with the host from your Lakehouse > Properties ABFSS path."
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedApiBaseUrl))
+    {
+        throw "No Fabric API base URL is defined for '$AzureEnvironment'. Microsoft Fabric endpoints for this cloud are not yet published; pass -ApiBaseUrl with your cloud's Fabric REST API base URL."
+    }
+
+    # From here on, use the resolved values so all API calls and the ABFSS endpoint
+    # target the correct cloud.
+    $ApiBaseUrl = $resolvedApiBaseUrl
+
+    $headers = @{
+        Authorization  = "Bearer $(ConvertTo-PilotPlainToken -Token $AccessToken)"
+        'Content-Type' = 'application/json'
+    }
+
+    # --- Workspace: get-or-create ------------------------------------------------
+    $workspace = Get-PilotFabricItem -Uri "$ApiBaseUrl/workspaces" -Headers $headers -DisplayName $WorkspaceName
+    if (-not $workspace)
+    {
+        if ($PSCmdlet.ShouldProcess($WorkspaceName, 'Create Fabric workspace'))
+        {
+            $body = @{ displayName = $WorkspaceName }
+            if ($CapacityId) { $body.capacityId = $CapacityId }
+            $workspace = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/workspaces" -Headers $headers -Body ($body | ConvertTo-Json)
+            Write-Verbose "Created workspace '$WorkspaceName' ($($workspace.id))."
+        }
+    }
+    else
+    {
+        Write-Verbose "Workspace '$WorkspaceName' already exists ($($workspace.id)); reusing."
+    }
+
+    if (-not $workspace)
+    {
+        # -WhatIf path: nothing was created, so stop before dependent calls.
+        Write-Warning 'Workspace was not created (WhatIf). Skipping Lakehouse and validation.'
+        return
+    }
+
+    $workspaceId = $workspace.id
+
+    # --- Lakehouse: get-or-create -----------------------------------------------
+    $lakehouse = Get-PilotFabricItem -Uri "$ApiBaseUrl/workspaces/$workspaceId/lakehouses" -Headers $headers -DisplayName $LakehouseName
+    if (-not $lakehouse)
+    {
+        if ($PSCmdlet.ShouldProcess($LakehouseName, 'Create Fabric Lakehouse'))
+        {
+            $body = @{ displayName = $LakehouseName } | ConvertTo-Json
+            $lakehouse = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/workspaces/$workspaceId/lakehouses" -Headers $headers -Body $body
+            Write-Verbose "Created Lakehouse '$LakehouseName' ($($lakehouse.id))."
+        }
+    }
+    else
+    {
+        Write-Verbose "Lakehouse '$LakehouseName' already exists ($($lakehouse.id)); reusing."
+    }
+
+    if (-not $lakehouse)
+    {
+        Write-Warning 'Lakehouse was not created (WhatIf). Skipping validation.'
+        return
+    }
+
+    # --- Resolve endpoints -------------------------------------------------------
+    # OneLake ABFSS path is deterministic from workspace + lakehouse names. The host
+    # segment ($resolvedOneLakeHost) is chosen by -AzureEnvironment / -OneLakeHost above:
+    # commercial uses onelake.dfs.fabric.microsoft.com, msit uses msit-onelake..., and
+    # sovereign clouds supply their own host. Only the host varies; the shape is identical.
+    $oneLakeEndpoint = "abfss://$WorkspaceName@$resolvedOneLakeHost/$LakehouseName.Lakehouse"
+
+    # SQL endpoint comes from the Lakehouse properties. It is provisioned asynchronously,
+    # so a newly-created Lakehouse reports no endpoint for the first few seconds. We read it
+    # back from the API rather than constructing it, so it is automatically correct for the
+    # current cloud (commercial, msit, or sovereign) with no extra config.
+    $sqlEndpoint = $lakehouse.properties.sqlEndpointProperties.connectionString
+    $deadline = (Get-Date).AddSeconds($ProvisioningTimeoutSeconds)
+    while (-not $sqlEndpoint -and (Get-Date) -lt $deadline)
+    {
+        Write-Verbose "SQL analytics endpoint not provisioned yet; retrying in 10s."
+        Start-Sleep -Seconds 10
+        $detail = Invoke-RestMethod -Method Get -Uri "$ApiBaseUrl/workspaces/$workspaceId/lakehouses/$($lakehouse.id)" -Headers $headers
+        $sqlEndpoint = $detail.properties.sqlEndpointProperties.connectionString
+    }
+    if (-not $sqlEndpoint)
+    {
+        throw "SQL analytics endpoint for Lakehouse '$LakehouseName' did not provision within $ProvisioningTimeoutSeconds seconds. Re-run this command; it is idempotent and will reuse the existing workspace and Lakehouse."
+    }
+
+    # --- Write parameters file ---------------------------------------------------
+    $params = [ordered]@{
+        workspaceName   = $WorkspaceName
+        lakehouseName   = $LakehouseName
+        oneLakeEndpoint = $oneLakeEndpoint
+        sqlEndpoint     = $sqlEndpoint
+        capacityId      = $CapacityId
+        environment     = 'pilot'
+    }
+
+    if ($PSCmdlet.ShouldProcess($ParametersPath, 'Write deployment parameters file'))
+    {
+        $params | ConvertTo-Json | Set-Content -Path $ParametersPath -Encoding utf8
+        Write-Verbose "Wrote parameters to $ParametersPath."
+    }
+
+    # --- Validate via the same fail-loud preflight the manual path uses ---------
+    . (Join-Path -Path $PSScriptRoot -ChildPath '..' -AdditionalChildPath @('manual', 'Test-PilotDeployment.ps1'))
+    return Test-PilotDeployment -ParametersPath $ParametersPath
+}
+
+<#
+    .SYNOPSIS
+    Normalizes an access token supplied as either a SecureString or a plain string.
+
+    .DESCRIPTION
+    ConvertTo-PilotPlainToken accepts what current Az.Accounts returns from Get-AzAccessToken (a SecureString)
+    as well as a plain string, and returns the bearer value. It also catches the common mistake of a
+    SecureString that was stringified before being passed in, which would otherwise send the literal text
+    "System.Security.SecureString" as the bearer token and fail with an opaque 401.
+
+    .PARAMETER Token
+    Required. The token as a SecureString or String.
+#>
+function ConvertTo-PilotPlainToken
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [object]
+        $Token
+    )
+
+    $plain = if ($Token -is [System.Security.SecureString])
+    {
+        [System.Net.NetworkCredential]::new('', $Token).Password
+    }
+    else
+    {
+        [string]$Token
+    }
+
+    if ([string]::IsNullOrWhiteSpace($plain))
+    {
+        throw 'AccessToken is empty.'
+    }
+
+    if ($plain -eq 'System.Security.SecureString')
+    {
+        throw "AccessToken was stringified from a SecureString. Pass the SecureString itself, or use (Get-AzAccessToken -ResourceUrl 'https://api.fabric.microsoft.com' -AsPlainText)."
+    }
+
+    return $plain
+}
+
+<#
+    .SYNOPSIS
+    Returns a Fabric item with the given display name from a list endpoint, or $null if absent.
+
+    .DESCRIPTION
+    Get-PilotFabricItem performs the get half of the get-or-create pattern. It enumerates a Fabric REST list
+    endpoint (handling continuation tokens) and returns the first item whose displayName matches, enabling
+    idempotent provisioning.
+
+    .PARAMETER Uri
+    Required. The Fabric REST list endpoint to query.
+
+    .PARAMETER Headers
+    Required. Request headers including the bearer token.
+
+    .PARAMETER DisplayName
+    Required. The display name to match.
+#>
+function Get-PilotFabricItem
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $Uri,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]
+        $Headers,
+
+        [Parameter(Mandatory = $true)]
+        [string]
+        $DisplayName
+    )
+
+    $next = $Uri
+    while ($next)
+    {
+        $response = Invoke-RestMethod -Method Get -Uri $next -Headers $Headers
+        $match = $response.value | Where-Object { $_.displayName -eq $DisplayName } | Select-Object -First 1
+        if ($match)
+        {
+            return $match
+        }
+
+        $next = if ($response.continuationUri) { $response.continuationUri } else { $null }
+    }
+
+    return $null
+}

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contractId": "fabric-onelake.focus-schema",
+  "contractVersion": "1.0.0",
+  "title": "D1 — FOCUS schema contract (logical)",
+  "description": "Machine-readable contract that the ingestion notebook loads and ENFORCES. Defines the logical FOCUS schema the pilot expects to receive from the KQL transform layer: which columns must exist, their FOCUS data types, which values may not be null, and the pinned FOCUS version. KQL remains the single transform owner (Decision 1); this contract is the validation gate that fails the build when the toolkit's KQL output drifts from what the pilot expects. Do NOT restate column definitions in prose — this file is the spec.",
+
+  "focus": {
+    "version": "1.2",
+    "schemaId": "1.2-preview",
+    "pinned": true,
+    "rationale": "FOCUS is still moving between 1.0 and 1.2. Pinning the version here means a toolkit KQL change that alters the output schema version fails validation in the pilot build rather than silently in production."
+  },
+
+  "columnSource": {
+    "type": "reference",
+    "description": "Canonical column + FOCUS-type definitions are owned by the toolkit open-data metadata. The pilot reuses that file as the source of truth instead of copying columns (copying would create the exact drift this decision avoids). The file alongside this contract is a verbatim copy of the upstream file, present only so the notebooks can load it from the Lakehouse Files area where the open-data tree is not available; it is never edited by hand and a unit test asserts it is byte-identical to upstream.",
+    "path": "./FocusCost_1.2-preview.json",
+    "upstreamPath": "src/open-data/dataset-metadata/FocusCost_1.2-preview.json",
+    "columnNameField": "ColumnName",
+    "dataTypeField": "DataType",
+    "integrity": {
+      "method": "sha256-newline-normalized",
+      "expected": "99baa3acdf3f5f61299498fb077bd4c7efc48f9057fc87d8d75632c85c7cd06c",
+      "note": "SHA-256 of the referenced file with CRLF normalized to LF. Normalization is required, not cosmetic: Git checks the same file out as CRLF on Windows and LF on Linux, so a raw-byte hash is pinned to whichever platform generated it and fails everywhere else. A mismatch means the upstream schema source changed and the contract must be re-reviewed before the pilot consumes it. Re-pin deliberately, as part of a FOCUS version review \u2014 never to make a failing run pass."
+    }
+  },
+
+  "typeMapping": {
+    "description": "Maps every FOCUS logical DataType used by columnSource to the logical type the pilot validates against. Must cover all DataTypes present in the source file; an unmapped type is a hard fail. Physical Delta/Spark types are defined in the D2 storage contract, not here. JSON columns are mapped to 'string' because the pilot stores them as plain strings to keep the DirectLake path open (Decision 4); a JSON-string is a string in Spark.",
+    "Decimal": "decimal",
+    "Number": "double",
+    "String": "string",
+    "DateTime": "timestamp",
+    "Boolean": "boolean",
+    "JSON": "string"
+  },
+
+  "requiredColumns": {
+    "description": "Columns that MUST be present in the KQL output. Derived from the FOCUS 1.2 Mandatory feature level. Reconcile this list against the FOCUS 1.2 specification on every FOCUS version bump; a column dropped upstream must fail validation here.",
+    "provenance": "FOCUS 1.2 Mandatory columns",
+    "columns": [
+      "BilledCost",
+      "BillingAccountId",
+      "BillingAccountName",
+      "BillingAccountType",
+      "BillingCurrency",
+      "BillingPeriodEnd",
+      "BillingPeriodStart",
+      "ChargeCategory",
+      "ChargeDescription",
+      "ChargePeriodEnd",
+      "ChargePeriodStart",
+      "ContractedCost",
+      "EffectiveCost",
+      "ListCost",
+      "ProviderName",
+      "PublisherName",
+      "ServiceCategory",
+      "ServiceName"
+    ]
+  },
+
+  "nonNullableColumns": {
+    "description": "Subset of required columns whose VALUES must never be null. Kept deliberately conservative to the cost measures and period/account keys the pilot's downstream layout and reports depend on. A null in any of these is a hard failure, not a warning.",
+    "columns": [
+      "BilledCost",
+      "EffectiveCost",
+      "ListCost",
+      "ContractedCost",
+      "BillingAccountId",
+      "BillingCurrency",
+      "BillingPeriodStart",
+      "BillingPeriodEnd",
+      "ChargePeriodStart",
+      "ChargePeriodEnd",
+      "ChargeCategory",
+      "ProviderName",
+      "ServiceName"
+    ]
+  },
+
+  "enforcement": {
+    "description": "Policy the ingestion notebook applies. Every rule maps to one of the 'if this breaks' silent-failure scenarios from the decision deck. All default to fail-loud.",
+    "failOnFocusVersionMismatch": true,
+    "failOnMissingRequiredColumn": true,
+    "failOnNullInNonNullableColumn": true,
+    "failOnTypeMismatch": true,
+    "failOnColumnSourceIntegrityMismatch": true,
+    "onUnexpectedExtraColumn": "warn",
+    "extraColumnNote": "Toolkit emits x_* augmentation columns (e.g. x_SkuLicenseType) and may add new FOCUS columns. Extra columns are tolerated (warn) so the pilot does not break on additive, backward-compatible schema growth; missing/changed columns are not tolerated."
+  }
+}

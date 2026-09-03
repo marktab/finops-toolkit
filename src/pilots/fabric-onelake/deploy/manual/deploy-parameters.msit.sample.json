@@ -1,0 +1,7 @@
+{
+  "workspaceName": "FinOps Pilot",
+  "lakehouseName": "FinOpsHub",
+  "oneLakeEndpoint": "abfss://FinOps Pilot@msit-onelake.dfs.fabric.microsoft.com/FinOpsHub.Lakehouse",
+  "sqlEndpoint": "abc123xyz.msit-datawarehouse.fabric.microsoft.com",
+  "environment": "pilot"
+}
