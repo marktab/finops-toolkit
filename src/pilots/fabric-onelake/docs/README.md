@@ -31,12 +31,12 @@ recommendation for best performance. What has not existed is a **OneLake Delta**
 cost data materialized as a managed Delta table that can be compacted, served through the
 SQL analytics endpoint, and eventually carry a Direct Lake semantic model.
 
-This pilot adds that path, taking the *already-normalized* FOCUS cost data the hub
+This pilot adds that path, taking the _already-normalized_ FOCUS cost data the hub
 produces and materializing it as a managed Delta table in OneLake. It is additive —
 nothing in the existing hub, templates, or reports changes, and it can be removed without
 impact.
 
-The principle behind every design choice below: each "if this breaks" case is a *silent*
+The principle behind every design choice below: each "if this breaks" case is a _silent_
 failure, so each contract is enforced by code that **stops loudly** when reality drifts,
 rather than a convention written in a doc that no one re-checks.
 
@@ -46,7 +46,7 @@ Each decision is enforced by tested, fail-loud code, not documentation.
 
 1. **Schema ownership stays in KQL.** The pilot does not re-implement FOCUS
    normalization in Spark. It validates the FOCUS output the toolkit already produces
-   against a machine-readable schema contract that *references* the existing
+   against a machine-readable schema contract that _references_ the existing
    `src/open-data/dataset-metadata/FocusCost_1.2-preview.json` rather than duplicating
    it. This avoids maintaining the same complex logic in two languages as FOCUS evolves.
 
@@ -144,25 +144,25 @@ tests — and each is enforced by a tested, fail-loud check.
 
 ## Component layout
 
-| Path | Contents |
-| ---- | -------- |
-| [contracts/](../contracts) | Machine-readable schema and physical Delta/compaction contracts (including the write/restatement, row-conservation, and batch-handoff invariants) that the code loads and enforces. |
-| [validation/](../validation) | The contract validator the notebooks import (unit-tested, no Spark required). |
-| [notebooks/](../notebooks) | Fabric notebooks 01–05: validate → write Delta → compact (with metrics) → layout precondition → promotion decision, plus the shared `lib/` helpers (`restatement`, `metrics`, `readiness`, `promotion`, `schema_bridge`). |
-| [deploy/manual/](../deploy/manual) | The proven-first manual setup and a fail-loud preflight check (including the private-networking guard). |
-| [deploy/automation/](../deploy/automation) | Idempotent Fabric REST provisioning (get-or-create) over the manual path. |
-| [deploy/orchestration/](../deploy/orchestration) | The ADF→Fabric notebook handoff (Bicep). |
-| [power-bi/](../power-bi) | The SQL-endpoint report variant, applied as a one-line source swap. |
+| Path                                             | Contents                                                                                                                                                                                                                  |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [contracts/](../contracts)                       | Machine-readable schema and physical Delta/compaction contracts (including the write/restatement, row-conservation, and batch-handoff invariants) that the code loads and enforces.                                       |
+| [validation/](../validation)                     | The contract validator the notebooks import (unit-tested, no Spark required).                                                                                                                                             |
+| [notebooks/](../notebooks)                       | Fabric notebooks 01–05: validate → write Delta → compact (with metrics) → layout precondition → promotion decision, plus the shared `lib/` helpers (`restatement`, `metrics`, `readiness`, `promotion`, `schema_bridge`). |
+| [deploy/manual/](../deploy/manual)               | The proven-first manual setup and a fail-loud preflight check (including the private-networking guard).                                                                                                                   |
+| [deploy/automation/](../deploy/automation)       | Idempotent Fabric REST provisioning (get-or-create) over the manual path.                                                                                                                                                 |
+| [deploy/orchestration/](../deploy/orchestration) | The ADF→Fabric notebook handoff (Bicep).                                                                                                                                                                                  |
+| [power-bi/](../power-bi)                         | The SQL-endpoint report variant, applied as a one-line source swap.                                                                                                                                                       |
 
 ### Operational tables
 
-| Table | Written by | Purpose |
-| ----- | ---------- | ------- |
-| `_pilot_ingestion_metrics` | 02 | Append-only ledger of every restatement: months, rows removed, rows written, Delta version. Makes a destructive replace auditable after the fact. |
-| `_pilot_compaction_metrics` | 03 | One row per compaction run; the input to both the SLA check and the layout precondition. |
-| `_pilot_directlake_gate` | 04 | One row per layout evaluation, with per-check results and reasons. |
-| `_pilot_directlake_promotion` | 05 | The promotion verdict and Z-order validation status. |
-| `_pilot_query_filter_stats` | *nothing yet* | Intended input for Z-order validation. Until a producer exists, 05 correctly reports the Z-order as `unvalidated`. |
+| Table                         | Written by    | Purpose                                                                                                                                           |
+| ----------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_pilot_ingestion_metrics`    | 02            | Append-only ledger of every restatement: months, rows removed, rows written, Delta version. Makes a destructive replace auditable after the fact. |
+| `_pilot_compaction_metrics`   | 03            | One row per compaction run; the input to both the SLA check and the layout precondition.                                                          |
+| `_pilot_directlake_gate`      | 04            | One row per layout evaluation, with per-check results and reasons.                                                                                |
+| `_pilot_directlake_promotion` | 05            | The promotion verdict and Z-order validation status.                                                                                              |
+| `_pilot_query_filter_stats`   | _nothing yet_ | Intended input for Z-order validation. Until a producer exists, 05 correctly reports the Z-order as `unvalidated`.                                |
 
 ## Testing
 
@@ -308,4 +308,3 @@ address the capacity-throttling symptoms documented in the pilot README.
 **Adopt it when** the pilot runs on real data. This is a graduation criterion — the
 cost-ceiling claim that motivates the whole pilot is currently an estimate, and a FinOps
 artifact should not ship an unmeasured economic argument.
-

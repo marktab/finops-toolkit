@@ -13,7 +13,7 @@ The pilot follows four design principles:
 - **Prove the manual path first**<br>_The manual deployment is built and proven before automation, so the automation is a convenience over a known-good path — not a single point of failure._
 - **Direct Lake is earned, not assumed**<br>_Power BI connects to the SQL analytics endpoint first; a layout precondition must hold over a full billing cycle, and a semantic model must be measured, before Direct Lake is enabled._
 
-Behind all four is one idea: each of these is a *silent* failure if it goes wrong, so
+Behind all four is one idea: each of these is a _silent_ failure if it goes wrong, so
 every contract is enforced by code that stops loudly the moment reality drifts, rather
 than a convention written in a doc that no one re-checks.
 
@@ -43,14 +43,14 @@ disrupting anything already deployed.
 
 If you already know the storage-based hub and reports, here is what changes:
 
-| | Storage path (Parquet / KQL) | This pilot (Fabric / OneLake) |
-|---|---|---|
-| **Where cost data lands** | Azure Data Explorer (KQL) or Parquet in storage | Managed Delta table in OneLake |
-| **Who owns the data shape** | KQL transform | **Still KQL** — the pilot only *validates* the output against a contract; it does not re-implement normalization in Spark |
-| **Small-file ceiling** | Reports slow as monitored spend grows, because many small files can't be compacted | Managed Delta is compacted daily (OPTIMIZE + Z-ORDER), removing the ceiling |
-| **How restatements land** | Handled upstream by the hub | Each batch is a full snapshot of the charge months it covers, and those months are **replaced** atomically — never appended |
-| **Power BI connection** | Import / DirectQuery over storage | SQL analytics endpoint; **Direct Lake is earned**, gated by a layout precondition plus a measured semantic model, not assumed |
-| **How contracts are enforced** | Documented conventions | Machine-readable contracts (`contracts/`) that **fail loudly** in code when reality drifts |
+|                                | Storage path (Parquet / KQL)                                                       | This pilot (Fabric / OneLake)                                                                                                 |
+| ------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Where cost data lands**      | Azure Data Explorer (KQL) or Parquet in storage                                    | Managed Delta table in OneLake                                                                                                |
+| **Who owns the data shape**    | KQL transform                                                                      | **Still KQL** — the pilot only _validates_ the output against a contract; it does not re-implement normalization in Spark     |
+| **Small-file ceiling**         | Reports slow as monitored spend grows, because many small files can't be compacted | Managed Delta is compacted daily (OPTIMIZE + Z-ORDER), removing the ceiling                                                   |
+| **How restatements land**      | Handled upstream by the hub                                                        | Each batch is a full snapshot of the charge months it covers, and those months are **replaced** atomically — never appended   |
+| **Power BI connection**        | Import / DirectQuery over storage                                                  | SQL analytics endpoint; **Direct Lake is earned**, gated by a layout precondition plus a measured semantic model, not assumed |
+| **How contracts are enforced** | Documented conventions                                                             | Machine-readable contracts (`contracts/`) that **fail loudly** in code when reality drifts                                    |
 
 ## What's included
 
@@ -80,11 +80,11 @@ filled-in parameters (`deploy/manual/deploy-parameters.sample.json` is the templ
 
 Three values have no defaults, on purpose — a wrong default here fails silently:
 
-| What | Where | Why there is no default |
-|---|---|---|
-| `ABFSS_ROOT` | `notebooks/00_generate_sample_focus.py` | The OneLake host differs by cloud; copy it from Lakehouse **> Properties**. |
-| `directLake.maxRows` / `maxFiles` / `minAvgFileSizeMB` | `contracts/storage-layout.contract.json` | Direct Lake limits vary by Fabric capacity SKU. A permissive default would let the layout precondition pass on a capacity that cannot serve the table — the exact silent failure the gate exists to catch. Look up the limits published for your SKU and record them. |
-| `sla_overrides` | `notebooks/03_compaction.py` parameters cell | Empty means the contract's production thresholds apply. Only set it for synthetic test data that cannot reach the 64MB floor. |
+| What                                                   | Where                                        | Why there is no default                                                                                                                                                                                                                                               |
+| ------------------------------------------------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ABFSS_ROOT`                                           | `notebooks/00_generate_sample_focus.py`      | The OneLake host differs by cloud; copy it from Lakehouse **> Properties**.                                                                                                                                                                                           |
+| `directLake.maxRows` / `maxFiles` / `minAvgFileSizeMB` | `contracts/storage-layout.contract.json`     | Direct Lake limits vary by Fabric capacity SKU. A permissive default would let the layout precondition pass on a capacity that cannot serve the table — the exact silent failure the gate exists to catch. Look up the limits published for your SKU and record them. |
+| `sla_overrides`                                        | `notebooks/03_compaction.py` parameters cell | Empty means the contract's production thresholds apply. Only set it for synthetic test data that cannot reach the 64MB floor.                                                                                                                                         |
 
 You also supply `oneLakeEndpoint`, `source_path`, and `ingestion_id` in the notebook
 parameter cells, and a filled-in `deploy/manual/deploy-parameters.json` for the preflight.
@@ -123,11 +123,11 @@ The two endpoints you supply — the OneLake ABFSS path and the SQL analytics en
 have the same shape everywhere; **only the host segment changes by cloud**. Defaults
 throughout this pilot target the **public commercial cloud**.
 
-| Cloud | OneLake DFS host | SQL endpoint suffix |
-|---|---|---|
-| **Commercial** (default) | `onelake.dfs.fabric.microsoft.com` | `.datawarehouse.fabric.microsoft.com` |
+| Cloud                         | OneLake DFS host                        | SQL endpoint suffix                        |
+| ----------------------------- | --------------------------------------- | ------------------------------------------ |
+| **Commercial** (default)      | `onelake.dfs.fabric.microsoft.com`      | `.datawarehouse.fabric.microsoft.com`      |
 | **Microsoft internal (msit)** | `msit-onelake.dfs.fabric.microsoft.com` | `.msit-datawarehouse.fabric.microsoft.com` |
-| **Sovereign** (Gov / China) | *placeholder — supply your host* | *placeholder — supply your suffix* |
+| **Sovereign** (Gov / China)   | _placeholder — supply your host_        | _placeholder — supply your suffix_         |
 
 > **Sovereign clouds:** Microsoft Fabric is generally available in the commercial cloud
 > today; its availability and endpoint hosts in Azure Government and Azure China are still
@@ -172,37 +172,37 @@ paste the full host — so the manual path is already sovereign-friendly.
 
 A quick symptom → cause → fix reference for the issues most likely to appear on first run:
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| OneLake File Explorer reports *"not in sync" / "Location is not available"* | Desktop app targets commercial OneLake; fails on msit/sovereign | Upload through the Fabric portal (**Files > Upload > Upload folder**) |
-| Notebook write to `/lakehouse/default/...` fails | Local mount not writable on msit | Write via the ABFSS endpoint (see `notebooks/00_generate_sample_focus.py`) |
-| `ModuleNotFoundError` importing `focus_pilot` or `contract_validator` | No default Lakehouse attached, or support folders not uploaded | Attach + set default Lakehouse; upload `notebooks/`, `contracts/`, `validation/` to Files |
-| `FileNotFoundError` on `FocusCost_1.2-preview.json` | Column-source file not uploaded with the contracts | Re-upload the `contracts/` folder |
-| `ContractViolation: ... expected json, got string` | Older contract mapped JSON columns to `json` | Re-upload the current `contracts/` (JSON maps to `string`) |
-| `ContractViolation: average file size below floor` on tiny data | Production SLA thresholds vs. synthetic test data | Set `sla_overrides` in the 03 parameters cell for pilot data; leave it empty for real billing data |
-| `GuardrailsNotConfigured` in notebook 04 | `directLake` limits are unset in the storage contract | Expected on a fresh clone — record the limits published for your Fabric capacity SKU |
-| `ImplausibleRestatement` in notebook 02 | The batch wrote far fewer rows than it replaced | Usually a truncated source export. Verify the export before overriding `min_restatement_row_ratio` |
-| `ActiveFileMismatch` in notebook 03 | Listing paths and Delta-log paths could not be reconciled | Report it — the metrics would otherwise be fabricated. Do not work around it by ignoring the listing |
-| Layout precondition blocked on small data | Dataset too small to meet the guardrails | Expected and correct; the SQL endpoint path still works |
-| `DataSource.CapacityExceeded` in Power BI | Trial Spark sessions still consuming capacity | Stop notebook sessions (**Monitor** hub) and retry after a few minutes |
-| Power BI refresh prompts for an Azure Blob storage account | Other report tables still point to storage | Expected — only `Costs` is swapped; cancel the prompt |
-| SQL endpoint: `Invalid object name 'Costs'` | Fabric lowercases Lakehouse table names at the SQL analytics endpoint | Query the lowercase name (`dbo.costs`); the shipped `ftk_FabricSql.pq` already uses lowercase |
+| Symptom                                                                     | Cause                                                                 | Fix                                                                                                  |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| OneLake File Explorer reports _"not in sync" / "Location is not available"_ | Desktop app targets commercial OneLake; fails on msit/sovereign       | Upload through the Fabric portal (**Files > Upload > Upload folder**)                                |
+| Notebook write to `/lakehouse/default/...` fails                            | Local mount not writable on msit                                      | Write via the ABFSS endpoint (see `notebooks/00_generate_sample_focus.py`)                           |
+| `ModuleNotFoundError` importing `focus_pilot` or `contract_validator`       | No default Lakehouse attached, or support folders not uploaded        | Attach + set default Lakehouse; upload `notebooks/`, `contracts/`, `validation/` to Files            |
+| `FileNotFoundError` on `FocusCost_1.2-preview.json`                         | Column-source file not uploaded with the contracts                    | Re-upload the `contracts/` folder                                                                    |
+| `ContractViolation: ... expected json, got string`                          | Older contract mapped JSON columns to `json`                          | Re-upload the current `contracts/` (JSON maps to `string`)                                           |
+| `ContractViolation: average file size below floor` on tiny data             | Production SLA thresholds vs. synthetic test data                     | Set `sla_overrides` in the 03 parameters cell for pilot data; leave it empty for real billing data   |
+| `GuardrailsNotConfigured` in notebook 04                                    | `directLake` limits are unset in the storage contract                 | Expected on a fresh clone — record the limits published for your Fabric capacity SKU                 |
+| `ImplausibleRestatement` in notebook 02                                     | The batch wrote far fewer rows than it replaced                       | Usually a truncated source export. Verify the export before overriding `min_restatement_row_ratio`   |
+| `ActiveFileMismatch` in notebook 03                                         | Listing paths and Delta-log paths could not be reconciled             | Report it — the metrics would otherwise be fabricated. Do not work around it by ignoring the listing |
+| Layout precondition blocked on small data                                   | Dataset too small to meet the guardrails                              | Expected and correct; the SQL endpoint path still works                                              |
+| `DataSource.CapacityExceeded` in Power BI                                   | Trial Spark sessions still consuming capacity                         | Stop notebook sessions (**Monitor** hub) and retry after a few minutes                               |
+| Power BI refresh prompts for an Azure Blob storage account                  | Other report tables still point to storage                            | Expected — only `Costs` is swapped; cancel the prompt                                                |
+| SQL endpoint: `Invalid object name 'Costs'`                                 | Fabric lowercases Lakehouse table names at the SQL analytics endpoint | Query the lowercase name (`dbo.costs`); the shipped `ftk_FabricSql.pq` already uses lowercase        |
 
 ## Known issues on Microsoft-internal (msit) and sovereign tenants
 
 These are environment quirks, not pilot bugs — you will hit them on msit and possibly on
 sovereign/air-gapped tenants, and the fix is operational:
 
-- **OneLake File Explorer (desktop app) may not sync** — it can report *"not in sync with
-  the cloud" / "Location is not available"* on msit even when signed in with the correct
+- **OneLake File Explorer (desktop app) may not sync** — it can report _"not in sync with
+  the cloud" / "Location is not available"_ on msit even when signed in with the correct
   account, because it targets the commercial OneLake. **Upload through the Fabric portal
   instead** (Lakehouse **> Files > Upload > Upload folder**).
 - **The local `/lakehouse/default` mount can fail for writes** on msit. Read/import via the
   mount works once a default Lakehouse is attached, but write via the **ABFSS endpoint**
   instead (see `notebooks/00_generate_sample_focus.py`, which writes to `ABFSS_ROOT`).
 - **Trial and low-SKU capacities throttle** after Spark notebook runs. Symptoms:
-  `DataSource.CapacityExceeded` in Power BI, or *"your organization's Fabric compute
-  capacity has exceeded its limits"*. **Stop notebook Spark sessions** (each notebook's
+  `DataSource.CapacityExceeded` in Power BI, or _"your organization's Fabric compute
+  capacity has exceeded its limits"_. **Stop notebook Spark sessions** (each notebook's
   **Stop session**, or the **Monitor** hub) and retry after a few minutes. This is a
   capacity limit, not a connection or schema error — the swap/query is already correct.
 
@@ -259,7 +259,7 @@ Worth stating plainly before anyone treats a green run as clearance for producti
 This is a **pilot**, and the folder name is a lifecycle stage — not a verdict on quality.
 It lives under `pilots/` because a few things are true only at pilot scale today, and the
 `pilots/` location keeps the promise that it is self-contained and removable while those
-prove out. "Pilot" here means *staged with a known graduation path*, not *demo*.
+prove out. "Pilot" here means _staged with a known graduation path_, not _demo_.
 
 **What "pilot" means right now**
 
