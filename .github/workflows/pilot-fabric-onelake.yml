@@ -1,16 +1,16 @@
-name: "Fabric OneLake Pilot Tests"
+name: 'Fabric OneLake Pilot Tests'
 
 on:
   pull_request:
     paths:
-      - "src/pilots/fabric-onelake/**"
+      - 'src/pilots/fabric-onelake/**'
       # The pilot pins a hash of this file and asserts its own copy matches it,
       # so an upstream FOCUS schema change has to re-run these tests.
-      - "src/open-data/dataset-metadata/FocusCost_1.2-preview.json"
+      - 'src/open-data/dataset-metadata/FocusCost_1.2-preview.json'
   push:
     paths:
-      - "src/pilots/fabric-onelake/**"
-      - "src/open-data/dataset-metadata/FocusCost_1.2-preview.json"
+      - 'src/pilots/fabric-onelake/**'
+      - 'src/open-data/dataset-metadata/FocusCost_1.2-preview.json'
   workflow_dispatch:
 
 permissions:
