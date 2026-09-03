@@ -6,9 +6,13 @@
 # it. That module is skipped when pyspark or delta-spark is absent, so this file is
 # optional for local runs and required in CI.
 #
-# Only delta-spark is pinned. It declares the compatible pyspark range itself, so
-# resolving pyspark through it makes the package metadata guarantee the Spark/Delta
-# pairing rather than a hand-maintained pair here that can silently drift apart.
-# Delta 4.x requires Java 17.
+# pyspark and delta-spark are pinned together and must stay consistent: a Delta
+# build targets one Spark version, and pairing it with another fails only at
+# session creation. Pinning delta-spark alone is NOT sufficient -- some releases
+# declare an unbounded "pyspark>=X", which resolves to whatever Spark is newest
+# and silently produces a mismatched pair. delta-spark 4.4.0 declares
+# pyspark>=4.0.1,<=4.2.0; 4.2.0 sits inside that range. Bump them together.
+# Delta 4.x requires Java 17 and Python 3.10+.
 pytest==8.3.4
-delta-spark==4.0.0
+pyspark==4.2.0
+delta-spark==4.4.0

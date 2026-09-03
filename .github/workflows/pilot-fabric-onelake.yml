@@ -36,13 +36,17 @@ jobs:
           python3 --version
           "$JAVA_HOME/bin/java" -version
 
+      # A virtual environment rather than the system interpreter: recent Ubuntu
+      # images mark the system Python as externally managed (PEP 668), which makes
+      # a plain pip install fail outright.
       - name: Install test dependencies
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r src/pilots/fabric-onelake/requirements-dev.txt
-          python3 -m pip list | grep -Ei 'pyspark|delta-spark|pytest'
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r src/pilots/fabric-onelake/requirements-dev.txt
+          .venv/bin/python -m pip list | grep -Ei 'pyspark|delta-spark|pytest'
 
       # Runs the pure contract/logic tests AND the Spark restatement tests, which
       # are skipped everywhere pyspark is absent. CI is the only place they run.
       - name: Run tests
-        run: python3 -m pytest src/pilots/fabric-onelake -v
+        run: .venv/bin/python -m pytest src/pilots/fabric-onelake -v
