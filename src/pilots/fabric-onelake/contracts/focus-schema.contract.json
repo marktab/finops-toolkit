@@ -20,9 +20,9 @@
     "columnNameField": "ColumnName",
     "dataTypeField": "DataType",
     "integrity": {
-      "method": "sha256",
-      "expected": "24b20dee864b3afb823ebcccbd74b524af33a80a9bfb9531c7dbf11d42f651c3",
-      "note": "SHA-256 of the referenced file at pin time. A mismatch means the upstream schema source changed and the contract must be re-reviewed before the pilot consumes it. Re-pin deliberately, as part of a FOCUS version review \u2014 never to make a failing run pass."
+      "method": "sha256-newline-normalized",
+      "expected": "99baa3acdf3f5f61299498fb077bd4c7efc48f9057fc87d8d75632c85c7cd06c",
+      "note": "SHA-256 of the referenced file with CRLF normalized to LF. Normalization is required, not cosmetic: Git checks the same file out as CRLF on Windows and LF on Linux, so a raw-byte hash is pinned to whichever platform generated it and fails everywhere else. A mismatch means the upstream schema source changed and the contract must be re-reviewed before the pilot consumes it. Re-pin deliberately, as part of a FOCUS version review \u2014 never to make a failing run pass."
     }
   },
 

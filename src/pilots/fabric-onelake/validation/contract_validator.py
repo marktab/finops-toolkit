@@ -43,11 +43,15 @@ def _load_json(path: Path) -> dict:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    """SHA-256 of a text file with line endings normalized to LF.
+
+    Git checks the same file out as CRLF on Windows and LF on Linux, so hashing
+    raw bytes pins the hash to whichever platform generated it and fails
+    everywhere else. Normalizing first makes the pin portable while still
+    detecting any real content change. Read whole rather than chunked: a chunk
+    boundary landing between CR and LF would normalize inconsistently.
+    """
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 # --------------------------------------------------------------------------- #

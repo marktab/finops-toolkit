@@ -7,10 +7,13 @@ on:
       # The pilot pins a hash of this file and asserts its own copy matches it,
       # so an upstream FOCUS schema change has to re-run these tests.
       - 'src/open-data/dataset-metadata/FocusCost_1.2-preview.json'
+      # Changes to this workflow must exercise themselves.
+      - '.github/workflows/pilot-fabric-onelake.yml'
   push:
     paths:
       - 'src/pilots/fabric-onelake/**'
       - 'src/open-data/dataset-metadata/FocusCost_1.2-preview.json'
+      - '.github/workflows/pilot-fabric-onelake.yml'
   workflow_dispatch:
 
 permissions:
