@@ -70,7 +70,7 @@ If you already know the storage-based hub and reports, here is what changes:
 3. `notebooks/02_delta_write.py` — managed Delta write, partitioned by `x_ChargeMonth`,
    replacing the batch's charge months rather than appending (Decision 2).
 4. `notebooks/03_compaction.py` — compaction with monitored SLA metrics (Decision 2).
-5. `notebooks/04_directlake_readiness.py` — Direct Lake layout precondition (Decision 4).
+5. `notebooks/04_directlake_precondition.py` — Direct Lake layout precondition (Decision 4).
 6. `notebooks/05_promotion.py` — promotion decision.
 
 Before any of that, run the fail-loud preflight in `deploy/manual/` against your

@@ -10,9 +10,9 @@
 /// variant applies to raw exports is not needed here - the SQL endpoint serves
 /// FOCUS-shaped rows directly.
 ///
-/// Mode is directQuery: immediate value, license-agnostic, layout-insensitive. The
-/// DirectLake upgrade is authorized only by the readiness gate (04_directlake_readiness),
-/// never assumed.
+/// Mode is directQuery: immediate value, license-agnostic, layout-insensitive. Direct Lake
+/// additionally requires the layout precondition (04_directlake_precondition) and a measured
+/// semantic model, and is never assumed.
 
 partition Costs-fabric-sql = m
 	mode: directQuery

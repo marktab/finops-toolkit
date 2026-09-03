@@ -66,8 +66,9 @@ it keeps `tag_*` columns available for any visual that references them.
 - **Sovereign clouds:** the `START HERE` validation accepts the commercial and msit SQL
   endpoint suffixes. For a sovereign cloud, extend the suffix check in
   `expressions.fabric.tmdl`. See the pilot [README](../README.md#endpoints-by-cloud).
-- **DirectLake:** this swap targets the SQL endpoint only. DirectLake is authorized
-  separately by the readiness gate (`notebooks/04_directlake_readiness.py`), not here.
+- **Direct Lake:** this swap targets the SQL endpoint only. Direct Lake additionally
+  requires the layout precondition (`notebooks/04_directlake_precondition.py`) and a
+  measured semantic model, neither of which is configured here.
 - **Table name casing:** Fabric lowercases Lakehouse table names at the SQL analytics
   endpoint (a table created as `Costs` is queried as `dbo.costs`), and the endpoint is
   case-sensitive. `ftk_FabricSql.pq` already uses lowercase names to match; if you add
