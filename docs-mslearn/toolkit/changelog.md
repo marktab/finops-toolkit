@@ -3,7 +3,7 @@ title: FinOps toolkit changelog
 description: Review the latest features and enhancements in the FinOps toolkit, including updates to FinOps hubs, Power BI reports, and more.
 author: MSBrett
 ms.author: brettwil
-ms.date: 09/03/2026
+ms.date: 09/11/2026
 ms.topic: reference
 ms.service: finops
 ms.subservice: finops-toolkit
@@ -38,6 +38,7 @@ The following section lists features and enhancements that are currently in deve
   - Replaced redundant `tolower()` comparisons in hub KQL with case-insensitive operators (`has`, `=~`, `!~`) so the engine can use the term index instead of scanning every row ([#2213](https://github.com/microsoft/finops-toolkit/issues/2213)).
   - Replaced whole-term `contains` matches with `has` across hub KQL and the query catalog (resource ID paths, licensing phrases, SKU description terms) and added a per-row operator-equivalence regression harness with unit test coverage ([#2220](https://github.com/microsoft/finops-toolkit/pull/2220)).
 - **Fixed**
+  - Fixed ADF schedule trigger deployment failures (`InvalidWorkflowTriggerRecurrence`) in regions not covered by the region-to-time-zone map (for example, Sweden Central), where the trigger's `startTime` was missing the required `Z` suffix for the `UTC` fallback time zone ([#2157](https://github.com/microsoft/finops-toolkit/issues/2157), [#2291](https://github.com/microsoft/finops-toolkit/pull/2291)).
   - Fixed managed exports failing with an `Unauthorized` error because the Role Based Access Control Administrator role was never assigned to the Data Factory identity. Roles requested by a hub app are now assigned on the publisher storage account even when the app doesn't create the storage account itself ([#2253](https://github.com/microsoft/finops-toolkit/issues/2253)).
   - Fixed private-network deployments that Azure Policy blocked when `defaultOutboundAccess` was omitted. Private mode subnets now set it to `false`, while an Azure Files private endpoint supports deployment-script storage and the NAT Gateway provides required container egress ([#2258](https://github.com/microsoft/finops-toolkit/issues/2258), [#2259](https://github.com/microsoft/finops-toolkit/pull/2259)).
   - Fixed the `ContractedCost` recompute guard to compare with a null-safe tolerance instead of exact float equality, eliminating millions of no-op rewrites that polluted the `x_SourceValues` audit trail while preserving the null-cost backfill and no longer overwriting an existing cost when the unit price is missing ([#2216](https://github.com/microsoft/finops-toolkit/issues/2216)).
@@ -68,6 +69,9 @@ The following section lists features and enhancements that are currently in deve
   - Added a comprehensive [Azure Optimization Engine reference](optimization-engine/reference.md) for runbooks, schedules, variables, Log Analytics tables, and SQL Database tables ([#1271](https://github.com/microsoft/finops-toolkit/issues/1271)).
 - **Changed**
   - Switched the reservations and benefits workbooks from the retired `ccmstorageprod` isfratioblob.csv to the FinOps toolkit [Instance size flexibility](open-data.md#instance-size-flexibility) open data file ([#2090](https://github.com/microsoft/finops-toolkit/issues/2090)).
+- **Fixed**
+  - Fixed a regression in the `AzureOptimizationConsumptionV1_CL` schema that was breaking the Reservations Usage workbook ([#2301](https://github.com/microsoft/finops-toolkit/issues/2301)).
+  - Fixed reservations disappearing from the reservation workbooks when their SKU is no longer sold. The instance size flexibility joins required a match, so an active reservation on a retired size was dropped from the report entirely rather than shown with its utilization. Unmatched SKUs now fall back to their own name as the flexibility group and a ratio of 1. The fallback applies to the reserved resource types that have instance size flexibility: virtual machines, Redis Cache, and dedicated hosts ([#2300](https://github.com/microsoft/finops-toolkit/issues/2300)).
 
 ### [PowerShell module](powershell/powershell-commands.md)
 
@@ -80,6 +84,9 @@ The following section lists features and enhancements that are currently in deve
 
 - **Added**
   - Added a new [Instance size flexibility](open-data.md#instance-size-flexibility) dataset that maps each ARM SKU to its instance size flexibility group and ratio, sourced from the Azure Reservations Catalogs API. It replaces the deprecated ISF ratio files hosted on `ccmstorageprod.blob.core.windows.net` ([#2090](https://github.com/microsoft/finops-toolkit/issues/2090)).
+    - Ratios use the same scale as the retired isfratioblob.csv: each flexibility group is normalized so its smallest SKU is `1`, matching the retired file for 1,223 of the 1,291 rows the two share. The Catalogs API publishes them unnormalized, and the Optimization Engine converts quantities into units of a group's smallest SKU ([#2309](https://github.com/microsoft/finops-toolkit/issues/2309)).
+    - Covers every physical Azure region instead of a fixed region list, so SKUs that launch in only a handful of regions are included.
+    - Refreshes weekly from the live catalog, so newly released SKUs appear and retired SKUs age out without anyone republishing the file.
 
 **[Commitment discount eligibility](open-data.md#commitment-discount-eligibility)**
 
