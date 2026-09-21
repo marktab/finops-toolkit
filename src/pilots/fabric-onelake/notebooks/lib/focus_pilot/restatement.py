@@ -13,6 +13,7 @@ before/after row counts.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import Iterable, Sequence
 
 
@@ -54,10 +55,8 @@ def check_restatement_ratio(
 ) -> None:
     """Reject a restatement that replaces a month with a fragment of itself.
 
-    ``replaceWhere`` cannot distinguish a genuine correction from a truncated
-    source export, and a truncated export silently deletes good months. A
-    month's row count effectively never halves between exports, so a large drop
-    means the source is incomplete.
+    This aggregate heuristic cannot establish source completeness: missing
+    scopes or months may pass. Independent pre-write acceptance is required.
 
     Args:
         rows_removed: Rows the replace deleted from the target months.
@@ -90,6 +89,8 @@ def write_month_snapshot(
     partition_columns: Sequence[str],
     table_exists: bool,
     predicate: str,
+    schema_contract_path: str | Path | None = None,
+    storage_contract_path: str | Path | None = None,
 ) -> None:
     """Write the batch as a full snapshot of the charge months it covers.
 
@@ -109,6 +110,23 @@ def write_month_snapshot(
         table_exists: Whether the target table already exists.
         predicate: Month predicate from :func:`charge_month_predicate`.
     """
+    from contract_validator import ContractViolation
+    from .schema_bridge import prepare_numeric_frame, validate_numeric_target
+
+    contracts = {}
+    if schema_contract_path is not None:
+        contracts["schema_contract_path"] = schema_contract_path
+    if storage_contract_path is not None:
+        contracts["storage_contract_path"] = storage_contract_path
+    if not predicate or df.limit(1).count() == 0:
+        raise ContractViolation("Zero-row replacement or empty predicate is unsupported; target unchanged.")
+    if table_exists:
+        validate_numeric_target(
+            {f.name: f.dataType.simpleString() for f in df.sparkSession.table(table_name).schema},
+            case_sensitive=df.sparkSession.conf.get("spark.sql.caseSensitive") == "true",
+            **contracts,
+        )
+    df = prepare_numeric_frame(df, **contracts)
     writer = (
         df.write.format("delta")
         .mode("overwrite")

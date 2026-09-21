@@ -14,12 +14,6 @@ from .metrics import (
     compute_file_metrics,
     select_active_file_sizes,
 )
-from .promotion import (
-    PromotionDecision,
-    ZorderRecommendation,
-    evaluate_directlake_promotion,
-    recommend_zorder,
-)
 from .readiness import (
     GuardrailsNotConfigured,
     LayoutPreconditionResult,
@@ -42,10 +36,6 @@ __all__ = [
     "FileMetrics",
     "compute_file_metrics",
     "select_active_file_sizes",
-    "PromotionDecision",
-    "ZorderRecommendation",
-    "evaluate_directlake_promotion",
-    "recommend_zorder",
     "GuardrailsNotConfigured",
     "LayoutPreconditionResult",
     "directlake_guardrails",

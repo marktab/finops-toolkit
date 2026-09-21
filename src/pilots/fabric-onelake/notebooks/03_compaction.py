@@ -7,11 +7,11 @@
 # # 03 - Compaction with metrics (Decision 2)
 #
 # Runs OPTIMIZE (+ Z-ORDER) on the managed Delta table and treats compaction as
-# a MONITORED SLA, not a fire-and-forget job. It captures before/after file
+# a point-in-time diagnostic against provisional thresholds. It captures file
 # metrics, appends them to an operational metrics table a watcher can alert on,
 # and then validates the result against the D2 compaction SLA - failing loudly
-# if the table is stale or fragmented. This notebook is load-bearing for both
-# query performance and the DirectLake-readiness gate.
+# if the listed checks fail. Scheduling and alerts are operator-owned and
+# unprovisioned. This is not proof of optimal layout or Direct Lake eligibility.
 
 # PARAMETERS CELL ********************
 
@@ -83,8 +83,7 @@ def _bytes_rewritten(optimize_rows) -> int | None:
 
 before = _active_file_metrics(table_name)
 
-# Compact. Z-order columns are provisional until validated against real query
-# patterns (Phase 6); re-running with different columns is non-destructive.
+# Retain the provisional layout; representative workload tuning is separate.
 zorder_clause = ", ".join(zorder_cols)
 optimize_result = spark.sql(f"OPTIMIZE {table_name} ZORDER BY ({zorder_clause})").collect()
 
@@ -114,8 +113,8 @@ print(f"Compaction metrics: {metrics_row}")
 
 # CELL ********************
 
-# Enforce the D2 compaction SLA. A stale or fragmented table fails here so it
-# pages someone instead of silently degrading queries and the layout gate.
+# Enforce the D2 compaction policy. Failure is explicit; paging requires
+# separately configured operator alerting.
 # The contract's PRODUCTION thresholds apply unless sla_overrides is set in the
 # parameters cell (pilot-scale synthetic data only).
 result = validate_compaction_sla(

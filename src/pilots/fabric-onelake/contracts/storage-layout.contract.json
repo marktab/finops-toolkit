@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "contractId": "fabric-onelake.storage-layout",
-  "contractVersion": "2.0.0",
+  "contractVersion": "2.1.0",
   "title": "D2 — physical storage contract (Delta in OneLake)",
-  "description": "Machine-readable contract for how FOCUS cost data is physically materialized in OneLake. Defines the managed Delta table, physical types, write/restatement semantics, partitioning, Z-order, and the compaction service-level expectation. The Delta write, the compaction-with-metrics notebook, and the Direct Lake layout precondition all load this file and FAIL LOUDLY when reality drifts from it. Do NOT assert these targets in documentation only — this file is the spec. Version 2.0.0 changed the write from append to month-scoped replace; see writeMode.",
+  "description": "Contract for the optional supplied-Parquet serving experiment: managed Delta types, full-month replacement, and provisional maintenance/layout diagnostics. Version 2.0.0 introduced month-scoped replacement; 2.1.0 enforces exact decimal(38,18) with no automatic migration of existing targets. Listed layout checks do not authorize Direct Lake or establish optimal performance.",
 
   "storageMode": {
     "type": "managedDelta",
-    "rationale": "Decision 2: managed Delta tables, not shortcuts. Shortcuts inherit the source small-file problem and cannot be compacted or Z-ordered, so they cannot remove the $2-5M/month query ceiling. Managed Delta with daily compaction is the only option that does.",
+    "rationale": "Optional independent serving-table lifecycle control for a bounded engineering experiment. Evaluate supported RTI and Eventhouse OneLake availability first; no performance or cost advantage is established.",
     "rejected": {
-      "shortcut": "Inherits small-file fragmentation; not compactable or Z-orderable. Same problem, different door."
+      "shortcut": "Not selected for this independent-write experiment. Managed/virtualized access remains a valid alternative when it meets the consumer requirement."
     }
   },
 
@@ -22,10 +22,10 @@
   },
 
   "physicalTypeMapping": {
-    "description": "Maps each D1 logical type to the physical Delta/Spark type written to OneLake. Cost/price measures use double (FOCUS 'real'), matching the toolkit v1_2 decision to use real over decimal for performance at scale.",
+    "description": "Maps D1 logical types to persisted Delta types. All canonical Decimal fields use exact decimal(38,18), independently of Kusto's physical representation; no Delta performance advantage or actual export schema is assumed.",
     "decimal": {
-      "deltaType": "double",
-      "rationale": "Toolkit Hub schema v1_2 converts cost/price measures from decimal to real (double) for query performance. The Delta layout matches that physical choice."
+      "deltaType": "decimal(38,18)",
+      "rationale": "Preserve accepted source values without binary floating-point conversion. Reject overflow and rounding before mutation. Existing incompatible targets require explicit operator-approved migration, never automatic conversion."
     },
     "double": { "deltaType": "double" },
     "string": { "deltaType": "string" },
@@ -42,7 +42,7 @@
     "mode": "replaceMonths",
     "replaceKey": "x_ChargeMonth",
     "minRestatementRowRatio": 0.5,
-    "minRestatementRowRatioNote": "A restatement that writes less than this fraction of the rows it removed is rejected. replaceWhere cannot tell a genuine correction from a truncated source export, and a truncated export would silently delete good months. A month's row count effectively never halves between exports, so this floor is conservative. Set to null at the call site for an intentional historical re-scope.",
+    "minRestatementRowRatioNote": "Aggregate shrink heuristic only: missing scopes or months may still pass. Independent operator acceptance of complete intended coverage, ordering, and single-writer isolation is required before mutation. Intentional re-scoping requires a separately approved procedure.",
     "rejected": {
       "append": "Duplicates every restated month; the failure is silent because per-hop counts still balance.",
       "mergeOnNaturalKey": "Azure FOCUS has no reliable natural key. A synthesized hash key would have to be PROVEN unique against real exports before it could be trusted, and is more expensive at scale than replacing whole months. Revisit only if batches ever become partial within a month."
@@ -65,7 +65,7 @@
   },
 
   "partitioning": {
-    "description": "Partition by charge period month. Aligns with the dominant time-range filter in cost reporting and keeps partition counts bounded.",
+    "description": "Retained provisional physical charge-month partitioning. Logical month replacement does not require this to be the optimal physical layout; justify it with representative workload measurements.",
     "columns": ["x_ChargeMonth"],
     "derivation": "x_ChargeMonth = date_trunc('month', ChargePeriodStart), stored as a DATE for partition pruning.",
     "note": "ChargePeriodStart itself is high-cardinality (daily); a derived month column keeps partitions coarse."
@@ -75,12 +75,12 @@
     "status": "provisional",
     "columns": ["BillingAccountId", "SubAccountId"],
     "rationale": "Reasonable default: these are the most common high-cardinality filter/group dimensions in multi-account, multi-subscription cost analysis.",
-    "validationRequired": "Confirm against the pilot customer's ACTUAL dominant query filters before locking in (Phase 6). Treat as provisional until one full billing cycle of query telemetry exists. Re-running OPTIMIZE ZORDER BY with different columns is non-destructive, so this is safe to revise.",
+    "validationRequired": "Unvalidated experiment setting. Measure representative selective predicates and rewrite costs before adopting a workload-specific layout; no telemetry recommendation API is provided.",
     "subscriptionIdNote": "FOCUS 1.2 names the subscription-level scope SubAccountId. Updated from the provisional SubscriptionId placeholder."
   },
 
   "compaction": {
-    "description": "Compaction is treated as a MONITORED SLA, not a fire-and-forget scheduled job. It is load-bearing for query performance AND for the DirectLake-readiness gate, and is the easiest thing to silently stop running.",
+    "description": "Provisional point-in-time maintenance policy. Daily scheduling and alert routing are operator-owned and unprovisioned; neither the policy nor its diagnostic establishes optimal layout or Direct Lake eligibility.",
     "schedule": "daily",
     "operation": "OPTIMIZE",
     "targetFileSizeMB": 128,
@@ -90,7 +90,7 @@
       "minAvgFileSizeMB": 64,
       "maxSmallFileFraction": 0.10,
       "smallFileThresholdMB": 16,
-      "note": "26h tolerance allows one missed daily window before alerting. Breaching any threshold must raise an alert (Data Activator / monitoring), not silently degrade queries. These are PRODUCTION thresholds; a small pilot/test dataset that cannot reach the 64MB floor should pass pilot-scale sla_overrides to validate_compaction_sla at the call site (see 03_compaction) rather than lowering these values."
+      "note": "26 hours is one daily interval plus two hours of lateness, not a missed full daily run. Scheduling and alerts are not provisioned. Retained 64-256 MB targets are provisional workload choices, not universal platform eligibility rules; the historical 256 MB-1 GB proposal is also unproven. Small partitions/tail files can legitimately miss the average floor. Record explicit synthetic test overrides without changing defaults."
     },
     "metrics": {
       "description": "Emitted on every run to a location an alert can watch. These are the inputs to both the SLA check and the Direct Lake layout precondition. File counts and sizes MUST be measured over the Delta log's ACTIVE file set: OPTIMIZE does not delete the files it supersedes, so a plain listing of the table location counts both generations and reports a freshly compacted table as fragmented.",
@@ -114,12 +114,12 @@
   },
 
   "directLake": {
-    "description": "Guardrails consumed by the Direct Lake layout precondition (Decision 4). Direct Lake silently falls back to DirectQuery above these limits, so they are checked, not assumed. These values are DELIBERATELY UNSET: the limits vary by Fabric capacity SKU, and a built-in default is wrong for most capacities in both directions — a permissive default produces a false pass on a small SKU, which is precisely the silent failure this gate exists to prevent. Look up the limits published for YOUR capacity SKU and record them here. The notebook fails loudly while they are null.",
+    "description": "Listed point-in-time layout checks, deliberately unset until the operator selects capacity/workload-specific thresholds. Unconfigured thresholds fail explicitly. Passing is not model validation, a fallback guarantee, or authorization for Direct Lake.",
     "maxRows": null,
     "maxFiles": null,
     "minAvgFileSizeMB": null,
-    "note": "Set minAvgFileSizeMB to at least the compaction SLA floor so a table that passes compaction is also sized appropriately for Direct Lake memory-mapping. Re-check all three on any capacity resize.",
-    "scopeNote": "These cover table LAYOUT only. Clearing them does not establish that a Direct Lake semantic model will perform: relationships, one-side uniqueness, RLS/OLS and fixed identity, framing, cold-query latency, memory pressure, and observed fallback are all model-level and are not evaluated here."
+    "note": "Configure capacity/workload-specific listed checks deliberately; these are not sufficient eligibility criteria. File-size floors are tuning choices and must account for small partitions and tail files.",
+    "scopeNote": "Listed checks only; V-Order verification is not performed. Actual model, relationships, security, framing, capacity, and performance remain untested. Direct Lake on OneLake does not fall back through SQL; Direct Lake on SQL fallback depends on constructs, security, limits, and configured behavior."
   },
 
   "rowConservation": {
@@ -129,9 +129,9 @@
   },
 
   "batchHandoff": {
-    "description": "Ingestion (notebook 01) and the Delta write (notebook 02) run as separate executions connected only by staging files in OneLake, whose listing can lag (see README OneLake sync notes). A partial staging read in notebook 02 would still pass that notebook's own row-conservation check because it conserves whatever subset it read — the loss is silent. This is the cross-boundary form of the #1625 / #2173 'processed a subset, assumed the whole' trap. To close it, notebook 01 writes an authoritative batch manifest (expected row count) and notebook 02 asserts, via validate_batch_completeness, that it consumed exactly that many rows before writing anything to Delta.",
+    "description": "Notebook 01 emits a self-derived staging row-count manifest. Notebook 02 checks identity and row count before mutation. This establishes row conservation across staging only, not upstream source completeness or intended scope/month coverage.",
     "manifestSuffix": "_manifest",
-    "note": "Mirrors how the toolkit hub uses manifest.json row counts — the exact mechanism issue #2173 shows failing when the count is null. The manifest count is authoritative, so completeness is an exact-equality check with no tolerance."
+    "note": "Exact staging count equality cannot detect omitted source scopes/months or stale batches. The operator must independently accept complete scope/month coverage, batch ordering, and exclusive writer ownership across manual and automated entry points; zero-row replacements are unsupported."
   },
 
   "enforcement": {

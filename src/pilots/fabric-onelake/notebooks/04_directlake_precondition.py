@@ -6,17 +6,17 @@
 
 # # 04 - Direct Lake layout precondition (Decision 4)
 #
-# Direct Lake on SQL silently falls back to DirectQuery (10-50x slower, no
-# error) when a table is not in a supported state - a failure discovered by end
-# users in production. This notebook evaluates the four measurable TABLE-LAYOUT
-# conditions and writes the verdict to a gate table.
+# This notebook records four listed layout checks, not platform eligibility.
+# Direct Lake on OneLake does not fall back through the SQL analytics endpoint.
+# Direct Lake on SQL fallback depends on source constructs, security, limits,
+# and DirectLakeBehavior. File-size targets are workload tuning, not guardrails.
 #
 # It is a precondition, not a readiness verdict. It never builds or queries a
 # Direct Lake semantic model, so it cannot observe relationships, one-side
 # uniqueness, RLS/OLS and fixed identity, framing, cold-query latency, memory
-# pressure, or an actual fallback. Passing means the layout no longer
-# disqualifies Direct Lake; Power BI still stays on the SQL endpoint until the
-# model-level proof in the graduation criteria is done.
+# pressure, or an actual fallback. Passing means the listed layout checks passed.
+# V-Order verification is not performed; inherited settings may already apply it.
+# Model validation remains separate. Gate history is diagnostic, not approval.
 
 # PARAMETERS CELL ********************
 
@@ -38,6 +38,8 @@ for _p in (_PILOT_ROOT / "notebooks" / "lib", _PILOT_ROOT / "validation"):
 from focus_pilot.readiness import (  # noqa: E402
     directlake_guardrails,
     evaluate_directlake_layout_precondition,
+    read_latest_compaction_evidence,
+    append_layout_assessment,
 )
 from focus_pilot.schema_bridge import find_unsupported_directlake_types  # noqa: E402
 from contract_validator import validate_compaction_sla, ContractViolation  # noqa: E402
@@ -53,20 +55,14 @@ guardrails = directlake_guardrails(storage_contract)
 
 # Condition 1: is compaction currently healthy? Reuse the D2 SLA check against
 # the latest metrics row rather than re-deriving the logic.
-latest = (
-    spark.read.table(metrics_table)
-    .orderBy("lastRunTimestampUtc", ascending=False)
-    .limit(1)
-    .collect()
-)
+decision_ts = datetime.now(timezone.utc)
 compaction_healthy = False
-if latest:
-    row = latest[0].asDict()
-    try:
-        validate_compaction_sla(row, str(_STORAGE_CONTRACT))
-        compaction_healthy = True
-    except ContractViolation as exc:
-        print(f"Compaction not healthy: {exc}")
+try:
+    row = read_latest_compaction_evidence(spark, table_name, metrics_table, now=decision_ts)
+    validate_compaction_sla(row, str(_STORAGE_CONTRACT), now=decision_ts)
+    compaction_healthy = True
+except ContractViolation as exc:
+    print(f"Compaction not healthy: {exc}")
 
 # CELL ********************
 
@@ -96,27 +92,28 @@ result = evaluate_directlake_layout_precondition(
     min_avg_file_size_mb=guardrails["min_avg_file_size_mb"],
 )
 
-decision_ts = datetime.now(timezone.utc)
 gate_row = {
     "tableName": table_name,
     "meetsLayoutPrecondition": result.meets_precondition,
     "checks": json.dumps(result.checks),
     "reasons": json.dumps(result.reasons),
     "evaluatedAtUtc": decision_ts.isoformat(),
+    "assessmentMetadata": json.dumps(result.assessment_metadata),
 }
-spark.createDataFrame([gate_row]).write.format("delta").mode("append").saveAsTable(gate_table)
+append_layout_assessment(spark, gate_table, gate_row)
 
 # CELL ********************
 
 if result.meets_precondition:
     print(
-        "PASS: table layout no longer disqualifies Direct Lake. This clears the "
-        "layout precondition only - build and measure a semantic model before migrating."
+        "PASS: the listed layout checks passed. This is not Direct Lake eligibility "
+        "or model validation; build and measure a semantic model before migrating."
     )
 else:
     print("BLOCKED: stay on the SQL endpoint. Reasons:")
     for reason in result.reasons:
         print(f"  - {reason}")
 
-# Expose the decision as the notebook's exit value for the orchestrator.
+print(f"Assessment scope: {json.dumps(result.assessment_metadata)}")
+# Expose the diagnostic as the notebook's exit value, not authorization.
 notebookutils.notebook.exit(json.dumps(result.as_dict()))  # noqa: F821

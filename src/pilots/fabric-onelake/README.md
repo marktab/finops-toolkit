@@ -1,295 +1,354 @@
 # FinOps Fabric / OneLake pilot
 
-The FinOps Fabric / OneLake pilot is an optional, self-contained path that takes the
-cost data your FinOps hub already produces and materializes it as a managed Delta table
-in Microsoft OneLake, so it can be compacted and served quickly to Power BI. It lives
-beside the existing toolkit and can be removed without impact — nothing in your current
-hub changes.
+An optional, isolated **supplied normalized Parquet → managed Delta → SQL analytics
+endpoint → existing-report source compatibility** experiment. It does not connect to
+Eventhouse, perform upstream FOCUS normalization, or change existing hubs and reports.
+The supplier must provide and accept complete monthly snapshots before replacement.
 
-The pilot follows four design principles:
+## Purpose and authorization
 
-- **KQL stays the single transform owner**<br>_The pilot validates the FOCUS data the toolkit already produces; it does not re-implement normalization in Spark._
-- **Managed Delta, not shortcuts**<br>_Only managed Delta tables can be compacted and Z-ordered to remove the small-file query ceiling._
-- **Prove the manual path first**<br>_The manual deployment is built and proven before automation, so the automation is a convenience over a known-good path — not a single point of failure._
-- **Direct Lake is earned, not assumed**<br>_Power BI connects to the SQL analytics endpoint first; a layout precondition must hold over a full billing cycle, and a semantic model must be measured, before Direct Lake is enabled._
+On September 21, 2026, the requesting operator authorized local implementation as a
+bounded engineering experiment. The hypothesis is that supplied normalized Parquet can
+support safe managed Delta month replacement, SQL reconciliation, and an existing-report
+source swap. No named customer, RTI deficiency, performance advantage, or economic benefit
+has been demonstrated. The **pilot author/requesting operator** owns source acceptance,
+maintenance of this experiment, evidence, and stop decisions.
 
-Behind all four is one idea: each of these is a _silent_ failure if it goes wrong, so
-every contract is enforced by code that stops loudly the moment reality drifts, rather
-than a convention written in a doc that no one re-checks.
+The current budget is **local-only, zero authorized cloud spend**. Capacity use,
+deployment, report changes, commits, pushes, and publication need separate authorization.
+The selected future validation path is **manual-only**; optional REST provisioning and
+ADF execution are **live-unvalidated**. Local preparation is not technical PR-readiness.
+Stop on correctness failures; do not run capacity validation without explicit access,
+budget, ownership, and cleanup approval.
 
-## Why this pilot?
+Success requires fresh regression evidence, actual Spark/Delta execution, and the
+[mandatory synthetic Fabric/SQL/report protocol](#required-validation-and-evidence)
+on the final code/configuration. Missing authorization or mandatory evidence blocks
+readiness. It does not justify manufacturing a customer need or declaring tests passed.
 
-The toolkit's storage-based Power BI path serves cost data well until an organization's
-spend grows large, at which point the data is split across many small Parquet files that
-can't be compacted, and reports slow down. (The toolkit's own guidance puts the storage
-path's practical limit at roughly \$1M/month in monitored spend; where exactly reports
-become unusable is workload-dependent and this pilot has not yet measured it on real data.)
+## Evaluate supported paths first
 
-The toolkit already has a Microsoft Fabric path: FinOps hubs can use **Fabric Real-Time
-Intelligence (RTI)** — an eventhouse — as a primary or secondary data store, and that is
-the recommended option today for the best performance and functionality. What has not
-existed is a **OneLake Delta** path: cost data materialized as a managed Delta table that
-can be compacted, served through the SQL analytics endpoint, and eventually carry a Direct
-Lake semantic model. This pilot adds one, without re-owning the data transform or
-disrupting anything already deployed.
+Azure Data Explorer and Fabric Real-Time Intelligence (RTI) are established supported
+toolkit reporting paths. Existing RTI deployments are investments to preserve, not
+presumed bottlenecks. Consult the [current report support matrix][report-support].
 
-> **If you already run FinOps hubs on Fabric RTI**, evaluate the eventhouse's OneLake
-> availability feature before adopting this pilot: it mirrors KQL tables into OneLake as
-> Delta with no Spark pipeline to operate. The trade-off is that mirrored tables are
-> read-only, so you cannot compact or Z-order them — which is exactly what this pilot
-> exists to do. See [For roadmap consideration](docs/README.md#for-roadmap-consideration).
+| Situation | Guidance |
+| --- | --- |
+| RTI meets the requirement | Keep RTI; Delta maintenance controls alone do not justify another copy. |
+| Storage reports struggle | Evaluate supported ADX/RTI; a storage bottleneck does not establish an RTI problem. |
+| An RTI user wants lake/SQL/notebook consumption | Evaluate [Eventhouse OneLake availability][eventhouse] and the relevant consumer first. SQL access requires the applicable availability and schema-synchronization setup. |
+| Managed OneLake access meets the need | Prefer it over maintaining a separate Spark copy. Lack of manual OPTIMIZE is not evidence of poor managed performance. |
+| Independent serving-table lifecycle or layout control is needed | Evaluate this isolated copy with explicit ownership and measured incremental value. |
+| Lower costs or faster reports are the motivation | Treat them as unproven hypotheses, not adoption recommendations. |
 
-## What's different from the storage path
+Issue [#1009](https://github.com/microsoft/finops-toolkit/issues/1009) records the RTI
+direction and removal of Lakehouse-report work from scope; merged
+[PR #1523](https://github.com/microsoft/finops-toolkit/pull/1523) delivered RTI support.
+Issue [#1246](https://github.com/microsoft/finops-toolkit/issues/1246) describes an
+integration/data-layer use case, not a requirement for this Delta copy. On September 21,
+2026, read-only GitHub API inspection found #1009 closed, #1246 open with no comments,
+and #1523 merged. Issue checkboxes are not independent implementation evidence.
+This experiment does not claim to close either issue.
+The linked Microsoft Learn support, Eventhouse availability, and table-maintenance
+guidance was also inspected on September 21, 2026; recheck it before publication.
 
-If you already know the storage-based hub and reports, here is what changes:
+## Input, acceptance, and coexistence boundary
 
-|                                | Storage path (Parquet / KQL)                                                       | This pilot (Fabric / OneLake)                                                                                                 |
-| ------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **Where cost data lands**      | Azure Data Explorer (KQL) or Parquet in storage                                    | Managed Delta table in OneLake                                                                                                |
-| **Who owns the data shape**    | KQL transform                                                                      | **Still KQL** — the pilot only _validates_ the output against a contract; it does not re-implement normalization in Spark     |
-| **Small-file ceiling**         | Reports slow as monitored spend grows, because many small files can't be compacted | Managed Delta is compacted daily (OPTIMIZE + Z-ORDER), removing the ceiling                                                   |
-| **How restatements land**      | Handled upstream by the hub                                                        | Each batch is a full snapshot of the charge months it covers, and those months are **replaced** atomically — never appended   |
-| **Power BI connection**        | Import / DirectQuery over storage                                                  | SQL analytics endpoint; **Direct Lake is earned**, gated by a layout precondition plus a measured semantic model, not assumed |
-| **How contracts are enforced** | Documented conventions                                                             | Machine-readable contracts (`contracts/`) that **fail loudly** in code when reality drifts                                    |
+Notebook 01 reads a configured Parquet path. **The actual upstream export artifact,
+producer stage, schema, extraction/casts, remaining KQL enrichment, and ADX/Eventhouse
+dependencies are not yet verified.** Canonical metadata defines the standalone contract,
+not proof that any ingestion-container file satisfies it. KQL retains upstream business
+semantics; the pilot must not duplicate normalization or infer exported types from a
+Kusto declaration. Do not automatically re-pin canonical metadata.
+
+The operator must complete this **pre-write acceptance procedure** before every run of
+01/02, including manual, retry, backfill, and orchestrated entry points:
+
+1. Identify the immutable source artifact/batch and its producing stage, schema evidence,
+   applied transformations, and any remaining enrichment/engine dependency. Refuse the
+   write if the normalized contract cannot be established.
+2. Record the target table identity, agreed scope set, every intended replacement charge
+   month, and independent evidence that each month covers every intended scope. Use the
+   producer's expected results or another independently established acceptance record,
+   not counts generated from the same suspect input.
+3. Record source version/order and compare it with the last accepted batch for every
+   affected month. Refuse older corrections after newer accepted data and refuse
+   ambiguous ordering. A replay must be the same accepted complete snapshot.
+4. Refuse missing/ambiguous coverage, report-filtered partial months, increments,
+   asynchronous subsets, and intentional zero-row replacements. An empty DataFrame
+   cannot convey intended deletion months. Re-scoping/deletion requires a separately
+   designed and approved procedure, not an override treated as routine success.
+5. Establish one writer across **all** entry points: prevent new manual/ADF runs, verify
+   no ingestion, replacement, or maintenance run is in flight for this table/staging
+   location, and hold the operator's exclusive run window through completion and
+   reconciliation. If isolation cannot be established, stop. One ADF pipeline's
+   concurrency setting is not a global lock.
+6. Retain the operator acceptance record with batch identity, coverage, independent
+   expected counts/totals, ordering decision, isolation window, and resulting target
+   version. Resume other entry points only after reconciliation or recorded recovery.
+
+Set notebook 02's required nonempty `acceptance_record_id` to the reference for this
+independent coverage, ordering, and all-entry-point exclusive-writer decision, alongside
+`ingestion_id` and the endpoint parameters. The notebook prints the reference but does
+not verify the record or add it as a ledger field. The operator must retain the durable
+acceptance evidence; supplying an identifier alone does not establish acceptance.
+
+These are **operator controls, not automated upstream-completeness, stale-batch, or
+global-lock detection**. The ingestion-generated staging manifest establishes
+source-to-staging and staging-to-writer conservation only. The restatement row-count
+floor is a heuristic: missing scopes can exceed it, omitted months cannot be inferred
+from observed rows, and aggregate counts can hide per-month loss.
+
+Accepted complete months replace existing months atomically, rather than append.
+Notebook 02 explicitly sets the Spark session time zone to **UTC** before deriving
+`x_ChargeMonth` from `ChargePeriodStart`. Replacement months therefore use UTC calendar
+boundaries; a local time zone must not move a midnight-UTC charge into the prior month.
+Replay safety is bounded by the accepted snapshot and single-writer restriction.
+Reconcile open-month updates, closed-month corrections, and unchanged other months.
+Do not union duplicate costs from RTI and the copy. Leave RTI tables, retention,
+reports, and managed OneLake files unchanged; OPTIMIZE only the pilot-owned Delta table.
+
+Extraction and copy/SQL/report access need independent authorization. RTI permissions
+do not automatically protect the copy. Record additional extraction, Spark, storage,
+query/refresh, support, contention, latency, and recovery costs. Source/backfill
+retention, serving-copy retention, query/report date windows, and Delta time travel are
+different controls; a wider filter cannot recover missing history. Rollback is an
+explicit source reversion for the opted-in report, not automatic failover.
+
+### Numeric acceptance and target compatibility
+
+The requesting operator selected **exact `decimal(38,18)`** storage for **every
+canonical logical Decimal field**, not just `BilledCost` or a selected set of costs.
+Only decimal-typed inputs whose values fit exactly without rounding or overflow are
+accepted for those fields. Double, float, string, and integer inputs are explicitly
+unsupported for Decimal fields; do not silently cast them into acceptance. Canonical
+logical Number fields remain finite `double`. Derive every applicable Decimal field
+from the pinned canonical metadata; preserve its nullability rules and integrity pin.
+
+The numeric helper casts accepted exact values to `decimal(38,18)` before staging
+and revalidates them before writing. The existing-target guard rejects incompatible
+canonical numeric columns; it does not rebuild the target.
+
+The target can hold 20 integral digits and 18 fractional digits. A source decimal's
+declared precision/scale alone does not establish that its actual values fit; no
+rounding tolerance is allowed at this storage boundary: tolerance is **zero**.
+Required regression must
+exercise fitting decimal variants and rejected types/values across all applicable
+fields, then verify persisted types and exact values through ingestion, staging,
+and replacement.
+
+Existing incompatible `Costs` types must fail **before writing** with the existing
+data intact. No automatic conversion, dropping/recreating the table, or other
+destructive target migration is authorized. This is a standalone input/target policy,
+not evidence that the actual upstream export satisfies it.
+[Microsoft Learn documents Delta DECIMAL mapping to SQL `decimal(p,s)`](https://learn.microsoft.com/fabric/data-warehouse/data-types#autogenerated-data-types-in-the-sql-analytics-endpoint)
+(inspected September 21, 2026). That documented mapping is not verification of this
+endpoint or Power BI model. Live SQL/report type representation and reconciliation
+remain unverified and mandatory before readiness.
 
 ## What's included
 
-- `contracts/` — the machine-readable schema and storage-layout contracts the notebooks enforce.
-- `notebooks/` — the ingestion → Delta write → compaction → readiness → promotion notebooks, plus a sample-data generator and the shared `lib/` helpers.
-- `validation/` — the contract validator the notebooks import (unit-tested, no Spark required).
-- `deploy/manual/` — the proven-first manual setup and a fail-loud preflight check.
-- `deploy/automation/` — idempotent Fabric REST provisioning (get-or-create) over the manual path.
-- `power-bi/` — the SQL-endpoint report variant, applied as a one-line source swap.
+| Path | Scope |
+| --- | --- |
+| `contracts/` and `validation/` | Canonical schema bridge, integrity pin, declared acceptance/type and layout checks. |
+| `notebooks/01_ingestion.py` | Validate supplied normalized Parquet and stage with a self-derived manifest. |
+| `notebooks/02_delta_write.py` | Replace accepted complete charge months in the pilot-managed Delta table. |
+| `notebooks/03_compaction.py` | OPTIMIZE and active-snapshot metrics under provisional policy. |
+| `notebooks/04_directlake_precondition.py` | Point-in-time listed layout checks, not Direct Lake authorization. |
+| `notebooks/00_generate_sample_focus.py` | Optional deterministic synthetic input and independent expected-results generator. |
+| `deploy/` | Manual setup/preflight plus optional, live-unvalidated provisioning and single-notebook ADF runner. |
+| `power-bi/` | Source-swap fragments, not a complete report variant or Direct Lake model. |
 
-## Run order
+There are **four functional notebooks (01–04), plus optional 00**. Notebook 05 and its
+promotion/history, query-filter-reader, and telemetry recommendation APIs are retired,
+with no replacement reporter. Keep old operational tables/data; do not use legacy or
+mixed diagnostic logs as trustworthy billing-cycle history without independent review.
+See [developer compatibility notes](docs/README.md#diagnostic-compatibility).
 
-1. `notebooks/00_generate_sample_focus.py` — optional: generates a small synthetic
-   FOCUS 1.2 dataset so you can prove the pipeline end-to-end without real data.
-   Set `ABFSS_ROOT` to your Lakehouse path first; it has no default.
-2. `notebooks/01_ingestion.py` — schema-validated ingestion (Decision 1).
-3. `notebooks/02_delta_write.py` — managed Delta write, partitioned by `x_ChargeMonth`,
-   replacing the batch's charge months rather than appending (Decision 2).
-4. `notebooks/03_compaction.py` — compaction with monitored SLA metrics (Decision 2).
-5. `notebooks/04_directlake_precondition.py` — Direct Lake layout precondition (Decision 4).
-6. `notebooks/05_promotion.py` — promotion decision.
+## Layout and runtime policy
 
-Before any of that, run the fail-loud preflight in `deploy/manual/` against your
-filled-in parameters (`deploy/manual/deploy-parameters.sample.json` is the template).
+Logical month replacement is distinct from physical `x_ChargeMonth` partitioning and
+from aggregation. This pilot does not implement monthly summary tables. Current
+partitioning, Z-order columns, daily OPTIMIZE, 128 MB target / 64–256 MB range, average
+file-size and small-file thresholds are **provisional workload settings**, not platform
+eligibility rules or demonstrated optima. The historical 256 MB–1 GB proposal was also
+unproven. Small partitions and tail files can legitimately miss a size target.
 
-## Before your first run
+The 26-hour freshness threshold means **a daily interval plus two hours of lateness**,
+not permission to miss an entire daily run. Scheduling of 03, diagnostic cadence for
+04, alert routing, and recovery are operator-owned and unprovisioned.
 
-Three values have no defaults, on purpose — a wrong default here fails silently:
+Consult [current cross-workload maintenance guidance][maintenance] for the selected
+supported runtime: adaptive sizing, auto-compaction, justified partitioning, and
+measured clustering predicates matter; runtime 2.0 defaults differ from runtime 1.3
+opt-ins. Record actual inherited/explicit settings and unknowns. This correction does
+not upgrade runtimes, introduce liquid clustering/deletion vectors, or retrofit files.
+V-Order configuration and file-level verification are deferred; **not verified does
+not mean disabled or incompatible**.
 
-| What                                                   | Where                                        | Why there is no default                                                                                                                                                                                                                                               |
-| ------------------------------------------------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ABFSS_ROOT`                                           | `notebooks/00_generate_sample_focus.py`      | The OneLake host differs by cloud; copy it from Lakehouse **> Properties**.                                                                                                                                                                                           |
-| `directLake.maxRows` / `maxFiles` / `minAvgFileSizeMB` | `contracts/storage-layout.contract.json`     | Direct Lake limits vary by Fabric capacity SKU. A permissive default would let the layout precondition pass on a capacity that cannot serve the table — the exact silent failure the gate exists to catch. Look up the limits published for your SKU and record them. |
-| `sla_overrides`                                        | `notebooks/03_compaction.py` parameters cell | Empty means the contract's production thresholds apply. Only set it for synthetic test data that cannot reach the 64MB floor.                                                                                                                                         |
-
-You also supply `oneLakeEndpoint`, `source_path`, and `ingestion_id` in the notebook
-parameter cells, and a filled-in `deploy/manual/deploy-parameters.json` for the preflight.
-
-**Runtime prerequisite:** notebooks 04 and 05 end with `notebookutils.notebook.exit(...)`,
-which requires **Fabric Runtime 1.2 or later**. On an older runtime they fail on the final
-cell only — everything before it still runs — so the symptom looks unrelated to the runtime.
+Notebook 04 passing means only **the listed layout checks passed**. It does not validate
+a semantic model, all platform guardrails, framing, relationships, security, memory,
+query performance, fallback behavior, or billing-cycle stability. Configure its unset
+thresholds using current capacity/mode documentation and explicit workload tuning
+choices; an average-size floor is not a universal Direct Lake guardrail.
 
 ## Running the notebooks in Fabric
 
-A few setup facts that are easy to miss the first time:
+These are future, separately authorized manual validation instructions, not evidence
+of a completed deployment:
 
-1. **Upload the support folders to the Lakehouse Files area.** The notebooks import
-   their helpers and load their contracts from `/lakehouse/default/Files` (the
-   `_PILOT_ROOT` at the top of each notebook). Upload `notebooks/` (which includes
-   `lib/`), `contracts/`, and `validation/` into **Files** so those imports resolve.
-   In the portal: Lakehouse **> Files > Upload > Upload folder**.
-2. **Import each `.py` as a Notebook item — separately from the Files copy.** The `.py`
-   file you upload to Files is just source on disk; it is not runnable. Import each one
-   as a workspace Notebook (**Import > Notebook > From this computer**) to get a
-   runnable item with a **Run all** button. Having the file in both places is normal.
-3. **Attach and set the default Lakehouse in EVERY notebook.** Without a default
-   Lakehouse, `/lakehouse/default/Files` does not resolve and the imports fail. In each
-   notebook: **Add data items** (Explorer pane) **> FinOpsLakehouse >** right-click **>
-   Set as default lakehouse**. This is per-notebook, not once per workspace.
-4. **`_PILOT_ROOT` matches an upload directly under `Files`** (so `Files/notebooks/lib`,
-   `Files/contracts`, `Files/validation`). If you upload the folders somewhere else,
-   update `_PILOT_ROOT` at the top of each notebook to match.
-5. **The layout precondition (04) is blocked on small datasets by design.** That is a
-   correct, reasoned verdict — tiny test data cannot meet the Direct Lake guardrails.
-   The SQL endpoint path still works; Direct Lake is earned over a full billing cycle.
+1. Follow [manual deployment and preflight](deploy/README.md) in an isolated approved
+   workspace/Lakehouse. Record runtime and capacity; do not reuse production RTI tables.
+2. Upload `notebooks/` (including `lib/`), `contracts/`, and `validation/` directly
+   under the Lakehouse **Files** area. `_PILOT_ROOT` assumes
+   `/lakehouse/default/Files`; adjust it if the upload location differs.
+3. Separately import each selected `.py` as a workspace **Notebook item**. A file
+   uploaded to Files is not a runnable Notebook.
+4. Attach and set the default Lakehouse in **every** notebook so support imports resolve.
+   Use a supported runtime with the `notebookutils.notebook.exit` API used by 04.
+5. Fill in notebook parameter cells, manual preflight parameters, the sample generator's
+   `ABFSS_ROOT` if used, and the diagnostic thresholds. Notebook 02 requires
+   `ingestion_id`, a nonempty `acceptance_record_id` referencing the independent
+   operator decision, and endpoint parameters. Endpoints have no safe generic tenant
+   value; copy them from your Lakehouse properties/settings.
+6. Generate input with optional 00 if needed, complete the pre-write acceptance
+   procedure, then run 01 → 02 → 03 → 04. A tiny fixture may fail provisional size checks legitimately. Record
+   explicit test-scale overrides to exercise positive paths and test negative paths;
+   do not weaken committed defaults to turn a policy failure into a pass.
+7. Reconcile the SQL endpoint after bounded observed synchronization, then validate a
+   copy of a representative report using [the source-swap instructions](power-bi/README.md).
+   Import source compatibility does not remove Import refresh, memory, or model-size limits.
 
-## Endpoints by cloud
+### Synthetic generator parameters and expected results
 
-The two endpoints you supply — the OneLake ABFSS path and the SQL analytics endpoint —
-have the same shape everywhere; **only the host segment changes by cloud**. Defaults
-throughout this pilot target the **public commercial cloud**.
+Optional notebook 00 produces **36 deterministic records** spanning April, May, and
+June 2025, two scopes, and two currencies. The fixture includes positive charges,
+credits, `1e-18` fractions, nullable optional fields, and every canonical Decimal
+field. This is synthetic input only, not a verified upstream export.
 
-| Cloud                         | OneLake DFS host                        | SQL endpoint suffix                        |
-| ----------------------------- | --------------------------------------- | ------------------------------------------ |
-| **Commercial** (default)      | `onelake.dfs.fabric.microsoft.com`      | `.datawarehouse.fabric.microsoft.com`      |
-| **Microsoft internal (msit)** | `msit-onelake.dfs.fabric.microsoft.com` | `.msit-datawarehouse.fabric.microsoft.com` |
-| **Sovereign** (Gov / China)   | _placeholder — supply your host_        | _placeholder — supply your suffix_         |
+Set `ABFSS_ROOT` to the approved Lakehouse root. `OUTPUT_PATH` defaults to
+`Files/sample-focus`; the generator adds `-decimal` or `-double` according to
+`numeric_variant`. Use the decimal variant for the accepted path. The double variant
+is deliberately unsupported for canonical Decimal fields: ingestion must reject it
+before target mutation. Do not change the contract to make this negative case pass.
+Configure notebook 01's source path to the chosen generated Parquet location.
 
-> **Sovereign clouds:** Microsoft Fabric is generally available in the commercial cloud
-> today; its availability and endpoint hosts in Azure Government and Azure China are still
-> emerging. The pilot ships **placeholders** for those clouds rather than guessing hosts —
-> supply the real values (from the portal) when Fabric is available in your cloud.
+The generator emits independent Python `Decimal` grouped expected totals as JSON at
+`source_path + "_producer_expected"`, with exact comparison tolerance **0**.
+Retain that producer evidence, the variant/configuration, and the operator acceptance
+record separately from the ingestion-generated staging manifest. Compare observed
+counts and totals by month, scope, and currency against the producer expectations;
+do not replace expectations with values calculated from suspect staging/target rows.
+These fixtures do not establish actual upstream schema compatibility or a real
+billing-cycle correction.
 
-### Where to find your values (authoritative source)
+### Endpoints by cloud
 
-- **OneLake ABFSS path** — Lakehouse **> Properties**. Form:
-  `abfss://{workspace}@{onelake-host}/{lakehouse}.Lakehouse`
-- **SQL analytics endpoint** — Lakehouse **> SQL analytics endpoint > Settings**
-  (host only, no `https://`, no database suffix).
+Copy actual OneLake ABFSS and SQL endpoint values from the selected tenant's portal;
+do not construct them from a cloud label. Commercial samples are defaults, not proof of
+a tested deployment. The `msit` and sovereign samples are **untested configuration
+examples**, not cloud-support claims. Sovereign placeholders and endpoint validation
+must be reviewed against current service availability before any attempt. Manual
+workspace creation bypasses provisioning automation, not APIs required by ADF.
 
-Always copy these from the portal for your tenant rather than assuming — the portal is
-authoritative and immediately tells you which host your cloud uses.
+For missing helper imports, first check Files placement and the default Lakehouse.
+For SQL object errors, inspect the actual synchronized schema/table name rather than
+assuming casing or successful synchronization. For capacity errors, investigate the
+actual capacity/load; throttling does not prove that the query or schema is correct.
+Other report tables may still require their original storage credentials.
 
-### Sovereign cloud
+## Required validation and evidence
 
-The pilot **defaults to commercial** and also accepts the Microsoft-internal (msit)
-hosts out of the box. It follows the toolkit's existing `-AzureEnvironment` convention
-(the same names the optimization engine uses: `AzureCloud`, `AzureUSGovernment`,
-`AzureChinaCloud`) and a Bicep-style lookup map with explicit overrides — sovereign
-entries are placeholders until Fabric publishes those endpoints. To target a sovereign
-cloud, keep the same shape and substitute your cloud's host in these places:
+**Local evidence status (September 21, 2026):** the coordinating validation owner
+reported these final runs against the corrected **uncommitted working tree**, based
+on unchanged HEAD `230f27a23f74ef434c806027f0da2179a21fafe7`, not HEAD alone:
 
-1. `deploy/manual/deploy-parameters.schema.json` — widen the `oneLakeEndpoint` and
-   `sqlEndpoint` regex patterns to include your suffix.
-2. `deploy/automation/Initialize-PilotFabric.ps1` — pass `-AzureEnvironment` for your
-   cloud plus `-OneLakeHost` and `-ApiBaseUrl` with your cloud's hosts (the lookup-map
-   entries for sovereign clouds are empty placeholders and will fail loudly until you
-   supply them). The SQL endpoint is read back from the Fabric API, so it needs no config.
-3. `power-bi/expressions.fabric.tmdl` — extend the `START HERE` suffix check with your
-   cloud's SQL endpoint suffix.
+| Validation | Result |
+| --- | --- |
+| System Python 3.13.14 / pytest 9.1.1 | 106 passed; two engine modules skipped because Spark was absent. |
+| Restored Python 3.13.14 / pytest 8.3.4 / Spark 4.2.0 / Delta 4.4.0 / JDK 17.0.18 | 126 tests: 106 passed, **20 setup errors**, 0 failed assertions, 0 skips; strict suite exit code **1**. |
+| Pester (PowerShell 7.6.6 / Pester 5.8.0) | 45 passed, 0 failed, 0 skipped; offline/mocked/static. |
+| Bicep 0.47.16 | Compilation passed without warnings; not live API validation. |
+| Python compileall, diff checks, editor diagnostics | Passed; not substitutes for engine execution. |
 
-This mirrors how the rest of the toolkit handles sovereign clouds: Bicep hubs use ARM's
-built-in `environment().suffixes` and, where a service isn't covered, a lookup map keyed
-by `environment().name` (see `Analytics/app.bicep`); the storage Power BI report takes the
-full storage URL as a parameter. The pilot's manual endpoints work the same way — you
-paste the full host — so the manual path is already sovereign-friendly.
+All 20 engine cases (six diagnostic and 14 numeric/restatement) are blocked by missing
+native Windows Hadoop setup (`HADOOP_HOME` / `winutils`). Zero failed assertions does
+not make a run with setup errors successful. **The complete regression is not passing
+and this branch is not technically PR-ready.** The validation owner retained XML
+evidence in local session files; no evidence is published or tied to a newly committed
+revision. See [scope and reproduction](docs/README.md#review-order-and-evidence).
 
-## Troubleshooting
+Synthetic capacity execution, SQL reconciliation, and representative report
+refresh/visual validation remain pending.
+The mandatory live run is blocked by the current zero-spend/no-deployment authorization.
+Optional live REST provisioning and ADF validation are not selected and remain unvalidated.
+See [review order and evidence requirements](docs/README.md#review-order-and-evidence).
 
-A quick symptom → cause → fix reference for the issues most likely to appear on first run:
+After local regression passes and capacity use is separately approved:
 
-| Symptom                                                                     | Cause                                                                 | Fix                                                                                                  |
-| --------------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| OneLake File Explorer reports _"not in sync" / "Location is not available"_ | Desktop app targets commercial OneLake; fails on msit/sovereign       | Upload through the Fabric portal (**Files > Upload > Upload folder**)                                |
-| Notebook write to `/lakehouse/default/...` fails                            | Local mount not writable on msit                                      | Write via the ABFSS endpoint (see `notebooks/00_generate_sample_focus.py`)                           |
-| `ModuleNotFoundError` importing `focus_pilot` or `contract_validator`       | No default Lakehouse attached, or support folders not uploaded        | Attach + set default Lakehouse; upload `notebooks/`, `contracts/`, `validation/` to Files            |
-| `FileNotFoundError` on `FocusCost_1.2-preview.json`                         | Column-source file not uploaded with the contracts                    | Re-upload the `contracts/` folder                                                                    |
-| `ContractViolation: ... expected json, got string`                          | Older contract mapped JSON columns to `json`                          | Re-upload the current `contracts/` (JSON maps to `string`)                                           |
-| `ContractViolation: average file size below floor` on tiny data             | Production SLA thresholds vs. synthetic test data                     | Set `sla_overrides` in the 03 parameters cell for pilot data; leave it empty for real billing data   |
-| `GuardrailsNotConfigured` in notebook 04                                    | `directLake` limits are unset in the storage contract                 | Expected on a fresh clone — record the limits published for your Fabric capacity SKU                 |
-| `ImplausibleRestatement` in notebook 02                                     | The batch wrote far fewer rows than it replaced                       | Usually a truncated source export. Verify the export before overriding `min_restatement_row_ratio`   |
-| `ActiveFileMismatch` in notebook 03                                         | Listing paths and Delta-log paths could not be reconciled             | Report it — the metrics would otherwise be fabricated. Do not work around it by ignoring the listing |
-| Layout precondition blocked on small data                                   | Dataset too small to meet the guardrails                              | Expected and correct; the SQL endpoint path still works                                              |
-| `DataSource.CapacityExceeded` in Power BI                                   | Trial Spark sessions still consuming capacity                         | Stop notebook sessions (**Monitor** hub) and retry after a few minutes                               |
-| Power BI refresh prompts for an Azure Blob storage account                  | Other report tables still point to storage                            | Expected — only `Costs` is swapped; cancel the prompt                                                |
-| SQL endpoint: `Invalid object name 'Costs'`                                 | Fabric lowercases Lakehouse table names at the SQL analytics endpoint | Query the lowercase name (`dbo.costs`); the shipped `ftk_FabricSql.pq` already uses lowercase        |
+1. Record exact tested revision, runtime, capacity SKU, owners, budget, safe window,
+   actual endpoints, cleanup scope, runtime/table settings, overrides, and unknowns.
+   Prove manual setup/preflight independently of optional automation.
+2. Use only reproducible multi-month/multi-scope synthetic data, with independent
+   producer expectations by currency/month/scope, charges, credits, small fractions,
+   nulls, and numeric acceptance/rejection variants. Record the acceptance procedure.
+3. Run 01/02; verify staging conservation, persisted target types, counts and financial
+   totals. Replay; apply separate full open-month and synthetic closed-month corrections;
+   verify no duplication and unchanged other months.
+4. Exercise incomplete/missing scope or month, staging truncation, zero rows, stale
+   corrections, and writer isolation on disposable targets. Attribute refusal to the
+   real automated check or operator control and verify target preservation. Also prove
+   that missing coverage can pass the shrink heuristic; it is not a completeness test.
+5. Run 03/04, capturing active-file metrics, target identity, scope/V-Order metadata,
+   positive/negative cases, and legacy/additive metadata compatibility. Exercise the
+   real adapter's cross-table and fresh/legacy cases using disposable operational
+   tables; negative cases must produce the intended error, not just any exception.
+   Do not borrow another table's newer evidence. Tiny-fixture overrides are not
+   production validation.
+6. Reconcile the intended SQL Costs table after a bounded synchronization wait, failing
+   on stale/missing state. Compare grouped counts and totals with independent expectations.
+7. Run the preferred Import source swap against a representative existing report;
+   capture refresh and a relevant visual/measure. Test optional DirectQuery separately
+   if claiming it works. Record actual licenses, permissions, and remaining data sources.
+8. Exercise failure/recovery and consumer rollback without modifying production RTI.
+   Retain sanitized evidence and remove only explicitly owned test resources.
 
-## Known issues on Microsoft-internal (msit) and sovereign tenants
+Fix failures and rerun affected cases, then finish with full passing regression and
+applicable Fabric scenarios on final code/configuration. Record commands, toolchain,
+pass/fail/skip counts, exact revision, and evidence locations; skipped mandatory Spark
+or live checks are not passes. Small synthetic runs do not establish actual upstream
+integration, real billing-cycle correctness, TB-scale performance, security across all
+access paths, favorable economics, Direct Lake behavior, or operational readiness.
 
-These are environment quirks, not pilot bugs — you will hit them on msit and possibly on
-sovereign/air-gapped tenants, and the fix is operational:
+## Non-goals and graduation
 
-- **OneLake File Explorer (desktop app) may not sync** — it can report _"not in sync with
-  the cloud" / "Location is not available"_ on msit even when signed in with the correct
-  account, because it targets the commercial OneLake. **Upload through the Fabric portal
-  instead** (Lakehouse **> Files > Upload > Upload folder**).
-- **The local `/lakehouse/default` mount can fail for writes** on msit. Read/import via the
-  mount works once a default Lakehouse is attached, but write via the **ABFSS endpoint**
-  instead (see `notebooks/00_generate_sample_focus.py`, which writes to `ABFSS_ROOT`).
-- **Trial and low-SKU capacities throttle** after Spark notebook runs. Symptoms:
-  `DataSource.CapacityExceeded` in Power BI, or _"your organization's Fabric compute
-  capacity has exceeded its limits"_. **Stop notebook Spark sessions** (each notebook's
-  **Stop session**, or the **Monitor** hub) and retry after a few minutes. This is a
-  capacity limit, not a connection or schema error — the swap/query is already correct.
+The first contribution does not provide a core hub Lakehouse deployment switch,
+export-pipeline integration, automatic RTI connector, complete report, Direct Lake model,
+monthly aggregation engine, MACC solution, universal retention default, allocation/
+finance engine, Copilot release, or new network/export provisioning modes.
 
-## Running the tests
+Graduation remains substantive and separate from technical PR-readiness:
 
-The contract validator and library logic are unit-tested and require no Spark cluster, so
-they run anywhere Python is available:
+1. Validate actual upstream handoff and real billing data over at least a full billing
+   cycle, including a closed-month restatement and verified history/retention coverage.
+2. Sustain relevant layout checks and independently build/measure the selected Direct
+   Lake model: relationships/uniqueness, RLS/OLS/identity, framing, cold-query latency,
+   memory pressure, and mode-specific fallback behavior.
+3. Sustain approved production maintenance policy without synthetic overrides. Establish
+   schedules, alert owners, failure recovery, retention/cleanup, and support ownership
+   before sustained operation; verify them for graduation.
+4. Prove intended endpoints on at least commercial and one non-commercial environment,
+   with actual service availability and access evidence, not configuration samples.
+5. Measure total economics and operational burden: extraction, Spark, SQL/report load,
+   storage including retained files, support, and contention, compared with matched
+   storage/RTI and managed OneLake alternatives. Retain, revise, or retire the copy
+   based on incremental value.
+6. Complete build/packaging/versioning/CI integration and obtain an explicit ownership,
+   support, and inclusion decision.
 
-```bash
-python -m pytest src/pilots/fabric-onelake
-```
+These criteria do not promise automatic upstream merge or relocation out of `pilots/`.
+See [conditional follow-on work](docs/README.md#for-roadmap-consideration).
 
-These cover the schema/type/non-null contract rules, the column-source integrity pin, the
-restatement predicate and shrink guard, the active-file selection that keeps compaction
-metrics honest, the compaction SLA logic, and the promotion decisions — the same checks
-the notebooks enforce at runtime — so a contract regression is caught without deploying
-to Fabric.
-
-One test module needs a real Delta engine and is **skipped unless it is installed**:
-
-```bash
-pip install -r src/pilots/fabric-onelake/requirements-dev.txt
-python -m pytest src/pilots/fabric-onelake/notebooks/tests/test_restatement_spark.py
-```
-
-It proves that re-running a batch does not duplicate cost data and that restating a month
-replaces rather than accumulates. That failure mode balanced every per-hop row count, so
-only a behavioural test can catch it.
-
-Running it locally needs a JDK 17 and a Python version within PySpark's supported range,
-and on Windows also `winutils.exe` with `HADOOP_HOME` set. Rather than ask every
-contributor for that, CI runs it on every change to this folder
-(`.github/workflows/pilot-fabric-onelake.yml`) — so the module is expected to show as
-skipped locally and to actually execute in the pipeline.
-
-### What the tests do not prove
-
-Worth stating plainly before anyone treats a green run as clearance for production:
-
-- **CI is not Fabric.** The behavioural tests run on the pinned `pyspark` / `delta-spark`
-  pair in `requirements-dev.txt`, which is a newer Spark and Delta than the Fabric runtime
-  ships. `replaceWhere` is long-stable API and is expected to behave identically, but the
-  combination this pilot relies on — `replaceWhere` with `partitionBy` and `mergeSchema` on
-  `saveAsTable` — has not been exercised on a Fabric runtime. Confirm it there first.
-- **Nothing here touches OneLake, the SQL analytics endpoint, or a semantic model.** No
-  test covers ABFSS paths, the Lakehouse catalog, Direct Lake, or capacity behaviour.
-- **No test uses real billing data.** Restatement is proven against synthetic months, not
-  against a real closed-month correction from Cost Management — which is the single most
-  valuable thing to try on a real capacity, because it is the scenario the replace-on-write
-  design exists for.
-
-## Pilot status and graduation
-
-This is a **pilot**, and the folder name is a lifecycle stage — not a verdict on quality.
-It lives under `pilots/` because a few things are true only at pilot scale today, and the
-`pilots/` location keeps the promise that it is self-contained and removable while those
-prove out. "Pilot" here means _staged with a known graduation path_, not _demo_.
-
-**What "pilot" means right now**
-
-- Contracts, validation, the fail-loud preflight, and the unit tests are production-grade
-  and run without a cluster.
-- The compaction SLA thresholds in the contract are the **production** values; synthetic
-  test data opts into pilot-scale thresholds per run via `sla_overrides`.
-- Direct Lake guardrails are **unset by design** — they are per-capacity-SKU and you must
-  record your own.
-- Direct Lake is gated: notebook 04 evaluates table layout only, so the SQL-endpoint path
-  is the supported connection today.
-
-**Graduation criteria — what has to be true to leave `pilots/`**
-
-1. Runs against **real billing data** for at least one full billing cycle, including at
-   least one closed-month restatement.
-2. The **layout precondition holds** on that real data, and a **Direct Lake semantic model
-   is built and measured** — framing, cold-query latency, memory pressure, and observed
-   fallback — against the capacity SKU in use.
-3. Compaction SLA thresholds hold at production values over that cycle, with no
-   `sla_overrides` in effect.
-4. Endpoints are proven on at least the commercial and one non-commercial cloud.
-5. **Cost effectiveness is measured**, not assumed: Fabric CU consumption for the notebooks
-   and SQL endpoint, plus OneLake storage growth, compared against the storage and hubs+RTI
-   paths. A materialization path in a FinOps toolkit has to show its own economics.
-6. The component is wired into the **build/packaging system** (versioning, tests in CI).
-
-**Where it graduates to**
-
-When those hold, this becomes a first-class **Fabric / OneLake materialization path** for
-the toolkit — a peer to the storage and KQL paths, moved out of `pilots/` into the main
-`src/` structure and packaged like the other components. Until then, it stays here,
-reversible and clearly labeled.
+[report-support]: https://learn.microsoft.com/cloud-computing/finops/toolkit/power-bi/help-me-choose
+[eventhouse]: https://learn.microsoft.com/fabric/real-time-intelligence/event-house-onelake-availability
+[maintenance]: https://learn.microsoft.com/fabric/fundamentals/table-maintenance-optimization

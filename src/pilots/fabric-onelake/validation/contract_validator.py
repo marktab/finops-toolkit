@@ -207,6 +207,22 @@ def load_storage_contract(contract_path: str | Path) -> dict:
     return _load_json(Path(contract_path))
 
 
+def normalize_timestamp_utc(value: object, label: str = "timestamp") -> datetime:
+    """Normalize ISO 8601/datetime evidence; legacy naive timestamps mean UTC."""
+    try:
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str) and value.strip():
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        else:
+            raise ValueError("Expected a datetime or ISO 8601 string")
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ContractViolation(f"Invalid {label}: expected a valid timestamp.") from exc
+
+
 def validate_compaction_sla(
     metrics: Mapping[str, object],
     contract_path: str | Path,
@@ -233,14 +249,18 @@ def validate_compaction_sla(
     Raises:
         ContractViolation: on any breached SLA threshold.
     """
+    import math
+
     contract = load_storage_contract(contract_path)
     compaction = contract["compaction"]
     sla = compaction["sla"]
     if sla_overrides:
         sla = {**sla, **sla_overrides}
     enforcement = contract["enforcement"]
-    now = now or datetime.now(timezone.utc)
+    now = normalize_timestamp_utc(now if now is not None else datetime.now(timezone.utc), "evaluation clock")
     result = ValidationResult()
+    if "lastRunStatus" in metrics and metrics["lastRunStatus"] != "success":
+        raise ContractViolation("Latest compaction run did not succeed.")
 
     # Staleness — has compaction run within the allowed window?
     if enforcement.get("failOnStaleCompaction", True):
@@ -249,10 +269,10 @@ def validate_compaction_sla(
             raise ContractViolation(
                 "Compaction has no recorded last-run timestamp; treat as never run."
             )
-        last_run = raw_ts if isinstance(raw_ts, datetime) else _parse_iso(str(raw_ts))
-        if last_run.tzinfo is None:
-            last_run = last_run.replace(tzinfo=timezone.utc)
+        last_run = normalize_timestamp_utc(raw_ts, "compaction timestamp")
         hours_since = (now - last_run).total_seconds() / 3600.0
+        if hours_since < 0:
+            raise ContractViolation("Compaction evidence is future-dated.")
         if hours_since > sla["maxHoursSinceLastSuccessfulRun"]:
             raise ContractViolation(
                 f"Compaction is stale: {hours_since:.1f}h since last run exceeds "
@@ -262,7 +282,9 @@ def validate_compaction_sla(
     # Average file size floor.
     if enforcement.get("failOnAvgFileSizeBelowMin", True):
         avg_size = metrics.get("avgFileSizeMBAfter")
-        if avg_size is not None and avg_size < sla["minAvgFileSizeMB"]:
+        if isinstance(avg_size, bool) or not isinstance(avg_size, (int, float)) or not math.isfinite(avg_size) or avg_size < 0:
+            raise ContractViolation("Average file size must be a finite, nonnegative number.")
+        if avg_size < sla["minAvgFileSizeMB"]:
             raise ContractViolation(
                 f"Average file size {avg_size}MB is below SLA floor "
                 f"{sla['minAvgFileSizeMB']}MB; table is fragmented."
@@ -271,7 +293,9 @@ def validate_compaction_sla(
     # Small-file fraction ceiling.
     if enforcement.get("failOnSmallFileFractionExceeded", True):
         fraction = metrics.get("smallFileFractionAfter")
-        if fraction is not None and fraction > sla["maxSmallFileFraction"]:
+        if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) or not math.isfinite(fraction) or not 0 <= fraction <= 1:
+            raise ContractViolation("Small-file fraction must be a finite number between 0 and 1.")
+        if fraction > sla["maxSmallFileFraction"]:
             raise ContractViolation(
                 f"Small-file fraction {fraction:.2%} exceeds SLA ceiling "
                 f"{sla['maxSmallFileFraction']:.2%}."
@@ -356,12 +380,11 @@ def validate_batch_completeness(
     subset, its own row-conservation check still balances (it conserves whatever
     it read), so the loss is silent — the cross-boundary form of the #1625 /
     #2173 "processed a subset, assumed the whole" trap. This compares the count
-    actually observed against the authoritative expected count handed across the
-    boundary (the batch manifest) and fails loudly on any mismatch before a
-    partial batch reaches the Delta table.
+    actually observed against the staging count handed across the boundary
+    and fails loudly on a mismatch. This cannot prove source completeness.
 
     Args:
-        expected_count: Authoritative row count from the upstream batch manifest.
+        expected_count: Self-derived row count from the staging manifest.
         observed_count: Rows actually read at this hop.
         contract_path: Path to storage-layout.contract.json.
         stage: Human-readable label for the hop, used in the error message.
@@ -374,6 +397,11 @@ def validate_batch_completeness(
     if not contract["enforcement"].get("failOnIncompleteBatch", True):
         return result
 
+    if any(type(count) is not int for count in (expected_count, observed_count)):
+        raise ContractViolation(
+            f"Batch completeness at '{stage}' requires non-null integer counts: "
+            f"expected={expected_count!r}, observed={observed_count!r}."
+        )
     if expected_count < 0 or observed_count < 0:
         raise ContractViolation(
             f"Batch completeness at '{stage}' hop received a negative count: "

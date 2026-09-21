@@ -6,9 +6,8 @@
     Provisions the Microsoft Fabric workspace and Lakehouse for the FinOps OneLake pilot via the Fabric REST API.
 
     .DESCRIPTION
-    Initialize-PilotFabric is the OPTIONAL automation layer that sits on top of the proven manual deployment
-    path (Decision 3). It is built only after the manual path works end-to-end, so it is a convenience over a
-    known-good path rather than a single point of failure.
+    Initialize-PilotFabric is an OPTIONAL automation layer for the manual deployment path (Decision 3).
+    Local mocked tests do not establish that provisioning works in a live Fabric workspace.
 
     The command is idempotent and re-runnable: it gets-or-creates the workspace and Lakehouse (never duplicating
     an existing one), resolves the OneLake and SQL endpoints, writes the deployment parameters file, and then
@@ -264,6 +263,11 @@ function Initialize-PilotFabric
     {
         $params | ConvertTo-Json | Set-Content -Path $ParametersPath -Encoding utf8
         Write-Verbose "Wrote parameters to $ParametersPath."
+    }
+    else
+    {
+        # Do not validate a missing or stale file when its write was declined.
+        return
     }
 
     # --- Validate via the same fail-loud preflight the manual path uses ---------

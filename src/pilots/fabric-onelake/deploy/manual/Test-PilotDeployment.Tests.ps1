@@ -74,6 +74,21 @@ Describe 'Test-PilotDeployment' {
     }
 
     Context 'Hard failures' {
+        It 'rejects the wrong JSON type for <Name>' -ForEach @(
+            @{ Name = 'workspaceName'; Value = 123 }
+            @{ Name = 'lakehouseName'; Value = @('FinOpsHub') }
+            @{ Name = 'capacityId'; Value = 123 }
+            @{ Name = 'privateNetworking'; Value = 'false' }
+            @{ Name = 'privateNetworking'; Value = 0 }
+            @{ Name = 'environment'; Value = $null }
+        ) {
+            $p = Get-GoodParams
+            $p[$Name] = $Value
+            $path = New-TempParams -Params $p
+            { Test-PilotDeployment -ParametersPath $path -SchemaPath $script:schemaPath } |
+            Should -Throw -ExpectedMessage "*$Name*"
+        }
+
         It 'throws when a required parameter is missing' {
             $p = Get-GoodParams
             $p.Remove('sqlEndpoint')
@@ -134,6 +149,27 @@ Describe 'Test-PilotDeployment' {
         It 'throws when the parameters file does not exist' {
             { Test-PilotDeployment -ParametersPath (Join-Path $TestDrive 'missing.json') -SchemaPath $script:schemaPath } |
             Should -Throw -ExpectedMessage '*not found*'
+        }
+
+        Context 'Offline preflight boundary' {
+            BeforeEach {
+                Mock Test-PilotEndpointReachability { throw 'Unexpected network call' }
+            }
+
+            It 'validates the <Sample> fixture without contacting endpoints' -ForEach @(
+                @{ Sample = 'deploy-parameters.sample.json' }
+                @{ Sample = 'deploy-parameters.msit.sample.json' }
+            ) {
+                $path = Join-Path $PSScriptRoot $Sample
+                Test-PilotDeployment -ParametersPath $path | Should -Not -BeNullOrEmpty
+                Should -Invoke Test-PilotEndpointReachability -Times 0 -Exactly
+            }
+
+            It 'rejects the sovereign placeholder rather than claiming support' {
+                $path = Join-Path $PSScriptRoot 'deploy-parameters.sovereign.sample.json'
+                { Test-PilotDeployment -ParametersPath $path } | Should -Throw
+                Should -Invoke Test-PilotEndpointReachability -Times 0 -Exactly
+            }
         }
     }
 }

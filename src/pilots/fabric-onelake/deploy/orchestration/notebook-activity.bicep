@@ -12,7 +12,9 @@
 // AzureDataExplorerCommand path, not a replacement for it.
 //
 // The handoff is intentionally a thin REST call layered over a notebook that has
-// already been proven via the manual deployment path (Test-PilotDeployment).
+// must be validated via the manual deployment path. Test-PilotDeployment checks
+// parameters, not notebook execution or data correctness. This pipeline reports
+// job completion only; it does not interpret notebook exit values.
 //==============================================================================
 
 @description('Required. Name of the existing Data Factory to add the pipeline to.')
@@ -65,7 +67,8 @@ resource pipeline_RunFabricNotebook 'Microsoft.DataFactory/factories/pipelines@2
         type: 'WebActivity'
         policy: {
           timeout: '0.00:10:00'
-          retry: 1
+          // A retry could submit a second job after an ambiguous POST response.
+          retry: 0
           retryIntervalInSeconds: 30
           secureOutput: false
           secureInput: false
@@ -73,6 +76,9 @@ resource pipeline_RunFabricNotebook 'Microsoft.DataFactory/factories/pipelines@2
         userProperties: []
         typeProperties: {
           method: 'POST'
+          // Keep the initial 202 Location header; the Until loop owns polling.
+          // https://learn.microsoft.com/azure/data-factory/control-flow-web-activity
+          turnOffAsync: true
           url: '${fabricApiBaseUrl}/workspaces/${fabricWorkspaceId}/items/${fabricNotebookId}/jobs/instances?jobType=RunNotebook'
           body: {
             executionData: '@pipeline().parameters.executionData'
@@ -109,7 +115,7 @@ resource pipeline_RunFabricNotebook 'Microsoft.DataFactory/factories/pipelines@2
         typeProperties: {
           // Stop polling once the job reaches a terminal state.
           expression: {
-            value: '@or(or(equals(variables(\'jobStatus\'), \'Completed\'), equals(variables(\'jobStatus\'), \'Failed\')), equals(variables(\'jobStatus\'), \'Cancelled\'))'
+            value: '@or(or(equals(variables(\'jobStatus\'), \'Completed\'), equals(variables(\'jobStatus\'), \'Failed\')), or(equals(variables(\'jobStatus\'), \'Cancelled\'), equals(variables(\'jobStatus\'), \'Deduped\')))'
             type: 'Expression'
           }
           timeout: jobTimeout
@@ -131,7 +137,7 @@ resource pipeline_RunFabricNotebook 'Microsoft.DataFactory/factories/pipelines@2
               policy: {
                 timeout: '0.00:05:00'
                 retry: 2
-                retryIntervalInSeconds: 15
+                retryIntervalInSeconds: 30
                 secureOutput: false
                 secureInput: false
               }

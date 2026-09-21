@@ -104,7 +104,7 @@ function Test-PilotDeployment
         }
     }
 
-    # --- Per-property pattern / enum validation ------------------------------
+    # --- Per-property type / pattern / enum validation -----------------------
     foreach ($prop in $params.PSObject.Properties.Name)
     {
         $rule = $schema.properties.$prop
@@ -113,7 +113,19 @@ function Test-PilotDeployment
             continue
         }
 
-        $value = [string]$params.$prop
+        $rawValue = $params.$prop
+        if (($rule.type -eq 'string' -and $rawValue -isnot [string]) -or
+            ($rule.type -eq 'boolean' -and $rawValue -isnot [bool]))
+        {
+            throw "Parameter '$prop' must have JSON type '$($rule.type)'."
+        }
+
+        $value = [string]$rawValue
+
+        if ($rule.minLength -and $value.Length -lt $rule.minLength)
+        {
+            throw "Parameter '$prop' is shorter than the minimum length of $($rule.minLength)."
+        }
 
         if ($rule.pattern -and $value -notmatch $rule.pattern)
         {

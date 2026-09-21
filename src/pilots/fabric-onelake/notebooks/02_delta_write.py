@@ -9,8 +9,8 @@
 # Writes the validated FOCUS data to a managed Delta table in OneLake per the D2
 # physical storage contract: managed Delta (not a shortcut), partitioned by a
 # derived charge-month column, with JSON columns stored as strings to keep the
-# DirectLake path open. Managed Delta is the only option that can later be
-# compacted and Z-ordered to remove the small-file query ceiling.
+# consumer representation flat. Independent layout control is experimental,
+# not evidence of a performance advantage over supported RTI/managed OneLake.
 #
 # Each batch is treated as a FULL SNAPSHOT of every charge month it covers, so
 # the write replaces those months atomically instead of appending to them.
@@ -21,11 +21,11 @@ oneLakeEndpoint = ""   # validated OneLake Lakehouse endpoint (from preflight)
 ingestion_id = ""      # correlation id from the orchestrator
 table_name = "Costs"   # target managed Delta table
 ledger_table = "_pilot_ingestion_metrics"  # append-only record of every restatement
+acceptance_record_id = ""  # operator's independent coverage/order/exclusive-writer acceptance
 
 # Fail if a restatement replaces a month with less than this fraction of the rows
-# it removed. A month's row count effectively never halves between exports, so a
-# drop that large means a truncated source export, not a real correction. Set to
-# None to disable (for example during an intentional historical re-scope).
+# it removed. This heuristic cannot prove completeness; missing scopes/months
+# may pass. Re-scoping requires a separately approved procedure.
 min_restatement_row_ratio = 0.5
 
 # CELL ********************
@@ -44,12 +44,17 @@ from focus_pilot.restatement import (  # noqa: E402
     write_month_snapshot,
 )
 from contract_validator import (  # noqa: E402
+    ContractViolation,
     validate_batch_completeness,
+    validate_focus_schema,
+    validate_non_null,
     validate_row_conservation,
 )
+from focus_pilot.schema_bridge import prepare_numeric_frame, spark_schema_to_logical  # noqa: E402
 
 _CONTRACTS = _PILOT_ROOT / "contracts"
 _STORAGE_CONTRACT = _CONTRACTS / "storage-layout.contract.json"
+_SCHEMA_CONTRACT = _CONTRACTS / "focus-schema.contract.json"
 with _STORAGE_CONTRACT.open(encoding="utf-8") as handle:
     storage_contract = json.load(handle)
 
@@ -61,7 +66,17 @@ from datetime import datetime, timezone  # noqa: E402
 
 from pyspark.sql import functions as F  # noqa: E402
 
+# Charge-month replacement uses UTC, not the notebook session's local timezone.
+spark.conf.set("spark.sql.session.timeZone", "UTC")
+
 # Read the validated staging copy written by notebook 01.
+if not oneLakeEndpoint.strip() or not ingestion_id.strip() or not acceptance_record_id.strip():
+    raise ValueError(
+        "oneLakeEndpoint, ingestion_id, and acceptance_record_id are required. "
+        "Before writing, independently accept intended full month/scope coverage and "
+        "batch order, and exclude every other manual/orchestrated writer until completion. "
+        "An ID records the operator decision; it does not automatically verify it."
+    )
 df = spark.read.parquet(f"{oneLakeEndpoint}/Files/_staging/{ingestion_id}")
 
 # Derive the partition column: month-truncated ChargePeriodStart, stored as date.
@@ -79,8 +94,28 @@ input_count = df.count()
 # cross-boundary guard — 02's own conservation check below would still pass on a
 # subset, hiding the loss (the #1625 / #2173 trap).
 _manifest_dir = f"{oneLakeEndpoint}/Files/_staging/{ingestion_id}_manifest"
-expected_count = int(spark.read.json(_manifest_dir).collect()[0]["expectedRowCount"])
+manifest_rows = spark.read.json(_manifest_dir).collect()
+if len(manifest_rows) != 1:
+    raise ContractViolation("Expected exactly one staging manifest; target unchanged.")
+manifest = manifest_rows[0].asDict()
+if manifest.get("ingestionId") != ingestion_id:
+    raise ContractViolation("Staging manifest ingestionId mismatch; target unchanged.")
+expected_count = manifest.get("expectedRowCount")
 validate_batch_completeness(expected_count, input_count, str(_STORAGE_CONTRACT), stage="staging-read")
+if input_count == 0:
+    raise ContractViolation("Zero-row replacements are unsupported; target unchanged.")
+schema_result = validate_focus_schema(
+    spark_schema_to_logical({f.name: f.dataType.simpleString() for f in df.schema}),
+    manifest.get("focusVersion"),
+    _SCHEMA_CONTRACT,
+)
+for warning in schema_result.warnings:
+    print(f"WARN: {warning}")
+null_counts = df.agg(*[
+    F.sum(F.col(c).isNull().cast("long")).alias(c) for c in df.columns
+]).first().asDict()
+validate_non_null(null_counts, _SCHEMA_CONTRACT)
+df = prepare_numeric_frame(df, _SCHEMA_CONTRACT, _STORAGE_CONTRACT)
 
 # CELL ********************
 
@@ -101,11 +136,8 @@ version_before = (
     else -1
 )
 
-# A restatement that lands far fewer rows than it removes is the one failure
-# replaceWhere cannot detect on its own: a truncated source export deletes good
-# months and leaves a fragment. Checked BEFORE the write — input_count is what we
-# are about to land, and batch completeness has already confirmed it against the
-# manifest — so a bad export is refused rather than diagnosed after the fact.
+# A shrink-floor breach is rejected before mutation. Passing does not establish
+# source completeness: independent operator acceptance is still required.
 check_restatement_ratio(rows_removed, input_count, min_restatement_row_ratio, months)
 
 # CELL ********************
@@ -116,13 +148,14 @@ write_month_snapshot(
     partition_columns=partition_cols,
     table_exists=table_exists,
     predicate=month_predicate,
+    schema_contract_path=_SCHEMA_CONTRACT,
+    storage_contract_path=_STORAGE_CONTRACT,
 )
 
 # CELL ********************
 
-# Read the commit by version rather than taking "the latest history row": a
-# concurrent writer between the write and the read would otherwise supply
-# another operation's metrics as if they were ours.
+# Version attribution requires exclusive writer ownership across manual and
+# automated entry points. This arithmetic does not detect overlapping writers.
 version_after = version_before + 1
 commit_rows = (
     spark.sql(f"DESCRIBE HISTORY {table_name}")
@@ -161,3 +194,4 @@ print(
     f"Replaced {rows_removed} row(s) with {output_count} row(s) across "
     f"{len(months)} charge month(s) in '{table_name}' (Delta v{version_after})."
 )
+print(f"Operator acceptance record: {acceptance_record_id}")

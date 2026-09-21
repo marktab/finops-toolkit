@@ -6,8 +6,8 @@
 
 # # 01 - Schema-validated ingestion (Decision 1)
 #
-# Reads FOCUS cost data produced by the toolkit's KQL transform layer (which
-# remains the single transform owner) and validates it against the D1 logical
+# Reads supplied, already-normalized FOCUS Parquet (upstream retains semantic
+# ownership) and validates it against the D1 logical
 # schema contract BEFORE anything downstream consumes it. Fails loudly on FOCUS
 # version drift, missing required columns, type mismatches, or nulls in
 # non-nullable columns. KQL stays the transform owner; this notebook is the gate.
@@ -34,7 +34,7 @@ _PILOT_ROOT = Path("/lakehouse/default/Files")  # adjust to deployed path
 for _p in (_PILOT_ROOT / "notebooks" / "lib", _PILOT_ROOT / "validation"):
     sys.path.insert(0, str(_p))
 
-from focus_pilot.schema_bridge import spark_schema_to_logical  # noqa: E402
+from focus_pilot.schema_bridge import prepare_numeric_frame, spark_schema_to_logical  # noqa: E402
 from contract_validator import (  # noqa: E402
     validate_focus_schema,
     validate_non_null,
@@ -47,7 +47,9 @@ _STORAGE_CONTRACT = _CONTRACTS / "storage-layout.contract.json"
 
 # CELL ********************
 
-# Read the FOCUS data as produced by the KQL transform (parquet).
+# Actual RTI extraction and exported schema have not been verified.
+if not source_path.strip() or not oneLakeEndpoint.strip() or not ingestion_id.strip():
+    raise ValueError("source_path, oneLakeEndpoint, and a unique ingestion_id are required.")
 df = spark.read.parquet(source_path)
 
 # CELL ********************
@@ -76,13 +78,16 @@ null_counts = (
     .asDict()
 )
 validate_non_null(null_counts, str(_SCHEMA_CONTRACT))
+if source_count == 0:
+    raise ValueError("Zero-row input is unsupported; no staging or target replacement performed.")
+df = prepare_numeric_frame(df, _SCHEMA_CONTRACT, _STORAGE_CONTRACT)
 
 print(f"Ingestion validated: {source_count} rows, FOCUS {focus_version}, ingestion_id={ingestion_id}")
 
 # CELL ********************
 
 # Hand the validated DataFrame to the next notebook via a temp view / path.
-# In the ADF pipeline this is chained; here we persist a validated staging copy.
+# The supplied ADF runner invokes only one notebook; chaining is operator-owned.
 _staging = f"{oneLakeEndpoint}/Files/_staging/{ingestion_id}"
 df.write.mode("overwrite").parquet(_staging)
 
@@ -92,10 +97,10 @@ df.write.mode("overwrite").parquet(_staging)
 staged_count = spark.read.parquet(_staging).count()
 validate_row_conservation(source_count, staged_count, str(_STORAGE_CONTRACT), stage="ingestion->staging")
 
-# Write an authoritative batch manifest alongside the staging copy so the next
+# Write a self-derived staging manifest alongside the staging copy so the next
 # notebook can assert it consumed the COMPLETE batch (not a partial, lagging
 # OneLake listing) before writing to Delta — the cross-boundary #1625 / #2173
-# trap. Mirrors the toolkit hub's manifest.json row-count mechanism.
+# trap. This does not prove authoritative source scope/month completeness.
 _manifest_dir = f"{oneLakeEndpoint}/Files/_staging/{ingestion_id}_manifest"
 _manifest = {
     "ingestionId": ingestion_id,

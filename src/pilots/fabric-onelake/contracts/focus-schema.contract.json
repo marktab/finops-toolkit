@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "contractId": "fabric-onelake.focus-schema",
-  "contractVersion": "1.0.0",
+  "contractVersion": "1.1.0",
   "title": "D1 — FOCUS schema contract (logical)",
   "description": "Machine-readable contract that the ingestion notebook loads and ENFORCES. Defines the logical FOCUS schema the pilot expects to receive from the KQL transform layer: which columns must exist, their FOCUS data types, which values may not be null, and the pinned FOCUS version. KQL remains the single transform owner (Decision 1); this contract is the validation gate that fails the build when the toolkit's KQL output drifts from what the pilot expects. Do NOT restate column definitions in prose — this file is the spec.",
 
@@ -34,6 +34,14 @@
     "DateTime": "timestamp",
     "Boolean": "boolean",
     "JSON": "string"
+  },
+
+  "numericInputPolicy": {
+    "decision": "Exact decimal storage authorized for the bounded standalone experiment; no actual upstream Parquet schema has been verified.",
+    "decimal": "Accept Spark decimal input only. Values must fit decimal(38,18) exactly; reject overflow or rounding before staging/writing. Double, float, integer, and string inputs are rejected for canonical Decimal fields.",
+    "double": "Canonical Number fields accept finite double/float input and are stored as double. No global relabeling of doubles as Decimal.",
+    "nulls": "Preserve nullable values; enforce nonNullableColumns separately.",
+    "financialTolerance": "Decimal source-to-Delta values and grouped totals must be exact (zero tolerance); no rounding is performed. SQL/report representation needs independent live verification."
   },
 
   "requiredColumns": {

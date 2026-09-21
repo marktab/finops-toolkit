@@ -7,8 +7,8 @@
 
     .DESCRIPTION
     Invoke-PilotManualSetup is an executable runbook for the pilot's manual deployment path (Decision 3).
-    The manual path is built and proven before any automated REST provisioning, so the automation later
-    becomes a convenience layer over a known-good path rather than a single point of failure.
+    Parameter preflight is separate from live notebook, SQL, and report validation. Neither this runbook
+    nor optional REST provisioning establishes that the manual path works end-to-end.
 
     The command prints the ordered manual provisioning steps the operator performs in the Fabric portal,
     then runs the fail-loud preflight (Test-PilotDeployment) against the parameters file the operator fills
@@ -74,6 +74,6 @@ function Invoke-PilotManualSetup
     Write-Host 'Running preflight validation...' -ForegroundColor Cyan
     $resolved = Test-PilotDeployment -ParametersPath $ParametersPath -TestConnectivity:$TestConnectivity
 
-    Write-Host 'Preflight passed. Manual deployment path is verified end-to-end.' -ForegroundColor Green
+    Write-Host 'Parameter preflight passed. Live notebook, SQL, and report validation is still required.' -ForegroundColor Green
     return $resolved
 }
