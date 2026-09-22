@@ -1,0 +1,27 @@
+/// Costs table partition - Fabric SQL-endpoint connection swap (Decision 4).
+///
+/// This replaces ONLY the Costs partition source in the existing report's
+/// Shared.Dataset/definition/tables/Costs.tmdl. Every column, hierarchy, measure,
+/// relationship, and visual in the report is reused verbatim. The single change is
+/// the data source: ftk_Storage(...) becomes ftk_FabricSql(...).
+///
+/// Because the Delta table is already FOCUS-normalized by the toolkit's KQL transform
+/// (the single transform owner), the heavy client-side normalization the storage
+/// variant applies to raw exports is not needed here - the SQL endpoint serves
+/// FOCUS-shaped rows directly.
+///
+/// Mode is directQuery: immediate value, license-agnostic, layout-insensitive. Direct Lake
+/// additionally requires the layout precondition (04_directlake_precondition) and a measured
+/// semantic model, and is never assumed.
+
+partition Costs-fabric-sql = m
+	mode: directQuery
+	queryGroup: Fabric
+	source = ```
+			let
+			    // Connection swap: read FOCUS-shaped Costs from the Fabric SQL endpoint.
+			    // Replaces: RawData = ftk_Storage("focuscost")
+			    Costs = ftk_FabricSql("focuscost")
+			in
+			    Costs
+			```

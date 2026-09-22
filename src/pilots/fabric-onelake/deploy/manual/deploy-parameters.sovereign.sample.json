@@ -1,0 +1,7 @@
+{
+  "workspaceName": "REPLACE-with-your-workspace-name",
+  "lakehouseName": "REPLACEWithYourLakehouseName",
+  "oneLakeEndpoint": "abfss://REPLACE-workspace@REPLACE-onelake-host/REPLACEWithYourLakehouseName.Lakehouse",
+  "sqlEndpoint": "REPLACE-with-your-sql-endpoint-host",
+  "environment": "pilot"
+}

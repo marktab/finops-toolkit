@@ -1,0 +1,55 @@
+name: 'Fabric OneLake Pilot Tests'
+
+on:
+  pull_request:
+    paths:
+      - 'src/pilots/fabric-onelake/**'
+      # The pilot pins a hash of this file and asserts its own copy matches it,
+      # so an upstream FOCUS schema change has to re-run these tests.
+      - 'src/open-data/dataset-metadata/FocusCost_1.2-preview.json'
+      # Changes to this workflow must exercise themselves.
+      - '.github/workflows/pilot-fabric-onelake.yml'
+  push:
+    paths:
+      - 'src/pilots/fabric-onelake/**'
+      - 'src/open-data/dataset-metadata/FocusCost_1.2-preview.json'
+      - '.github/workflows/pilot-fabric-onelake.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The Spark-backed restatement test needs a JVM. ubuntu-latest ships several
+      # JDKs already, so JAVA_HOME_17_X64 avoids taking a dependency on setup-java,
+      # which this repo would require pinning to a reviewed SHA.
+      - name: Select JDK 17
+        run: echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+
+      # Printed unconditionally: a pyspark/delta/Python mismatch is the most likely
+      # cause of a failure here, and it is diagnosable from these three lines alone.
+      - name: Show toolchain
+        run: |
+          python3 --version
+          "$JAVA_HOME/bin/java" -version
+
+      # A virtual environment rather than the system interpreter: recent Ubuntu
+      # images mark the system Python as externally managed (PEP 668), which makes
+      # a plain pip install fail outright.
+      - name: Install test dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r src/pilots/fabric-onelake/requirements-dev.txt
+          .venv/bin/python -m pip list | grep -Ei 'pyspark|delta-spark|pytest'
+
+      # Runs the pure contract/logic tests AND the Spark restatement tests, which
+      # are skipped everywhere pyspark is absent. CI is the only place they run.
+      - name: Run tests
+        run: .venv/bin/python -m pytest src/pilots/fabric-onelake -v
